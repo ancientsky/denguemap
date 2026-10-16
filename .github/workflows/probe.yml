@@ -10,46 +10,53 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: round1 nav and data calls
+      - name: round2 code dump
         shell: bash
         run: |
           set +e
           mkdir -p site && cd site
           B=https://cdcdengue.azurewebsites.net
-          for p in "" ma.aspx denguecluster.aspx VectorMap.aspx imported.aspx; do
-            f="page_${p:-index}.html"
-            curl -sS -L --connect-timeout 15 --max-time 60 -o "$f" -w "$p -> %{http_code} %{size_download}\n" "$B/$p"
+          for p in "" Timemap.aspx Index.aspx DengueCluster.aspx VectorMap.aspx Imported.aspx ma.aspx; do
+            f="page_${p:-root}.html"
+            curl -sS -L --connect-timeout 15 --max-time 60 -o "$f" -w "$p -> %{http_code} %{size_download} %{url_effective}\n" "$B/$p"
           done
-          echo "##### NAV (a href) per page"
-          for f in page_*.html; do echo "== $f"; grep -oiE '<a [^>]*>' "$f" | head -60; done
-          echo "##### SELECTS"
+          echo "##### per-page scripts (custom only) and inline scripts"
           python3 - <<'PY'
           import re,glob
           for f in sorted(glob.glob('page_*.html')):
               t=open(f,encoding='utf-8',errors='replace').read()
               print('==',f,len(t))
-              for m in re.finditer(r'<select[^>]*>.*?</select>',t,re.S):
-                  s=m.group(0)
-                  print(re.search(r'<select[^>]*>',s).group(0))
-                  print('  ',re.findall(r'<option[^>]*value="([^"]*)"[^>]*>\s*([^<]*)',s))
-              for m in re.finditer(r'<input[^>]*>',t):
-                  print('INPUT',m.group(0)[:200])
+              print(' SRC:',[s for s in re.findall(r'<script[^>]*src="([^"]*)"',t) if '__customized' in s or 'pathmap' in s or 'highcharts' in s or 'datatables' in s])
+              print(' LINKS css:',re.findall(r'<link[^>]*href="([^"]*)"',t))
               for m in re.finditer(r'<script(?![^>]*src)[^>]*>(.*?)</script>',t,re.S):
                   b=m.group(1)
-                  if 'ajax' in b or 'asmx' in b or 'getJSON' in b or 'fetch' in b:
-                      print('INLINE SCRIPT with data call:',b[:3000])
+                  if 'google-analytics' in b: continue
+                  print(' INLINE SCRIPT:',b.strip()[:2500])
           PY
-          echo "##### SCRIPT LIST"
-          grep -ohiE '<script[^>]*src="[^"]*"' page_*.html | sed -E 's/.*src="//; s/"$//' | sort -u > srcs.txt
-          cat srcs.txt
-          for r in $(cat srcs.txt) resource/Semantic-UI/2.0.3/pathmap.js resource/__workers/1.0/shared_GETGEO.js resource/__workers/1.0/village309.js resource/__workers/1.0/ns1hosp_worker.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/InsectCluster.js resource/__customized/1.0/InsectTable.js resource/__customized/1.0/InsectTour.js resource/__customized/1.0/Insectarea.js resource/__customized/1.0/area.js resource/__customized/1.0/general.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/ma.js resource/__customized/1.0/main.js resource/__customized/1.0/masterpage.js resource/__customized/1.0/timemap.js resource/__customized/1.0/ns1hosp.js; do
-            case "$r" in http*|//*) continue;; esac
-            out="js_$(echo "${r%%\?*}" | tr '/' '_')"
-            [ -f "$out" ] && continue
-            curl -sS -L --connect-timeout 15 --max-time 60 -o "$out" -w "$r -> %{http_code} %{size_download}\n" "$B/${r#/}"
+          for r in resource/__workers/1.0/dwork_ajax.js resource/__workers/1.0/shared_GETGEO.js resource/__workers/1.0/village309.js resource/__workers/1.0/ns1hosp_worker.js resource/__customized/1.0/main.js resource/__customized/1.0/masterpage.js resource/__customized/1.0/InsectTable.js resource/__customized/1.0/InsectTour.js resource/Semantic-UI/2.0.3/pathmap.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/InsectCluster.js resource/__customized/1.0/Insectarea.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/ns1hosp.js resource/__customized/1.0/general.js resource/__customized/1.0/timemap.js resource/__customized/1.0/area.js; do
+            out="js_$(basename $r)"
+            curl -sS -L --connect-timeout 15 --max-time 60 -o "$out" -w "$r -> %{http_code} %{size_download}\n" "$B/$r"
           done
-          echo "##### data-call grep in custom js and pages"
-          for f in js_resource___customized* js_resource___workers* js_resource_Semantic-UI_2.0.3_pathmap.js page_*.html; do
-            echo "=========== $f ($(wc -c <$f) bytes)"
-            grep -nE 'ajax|\$\.get|\$\.post|getJSON|fetch\(|XMLHttpRequest|importScripts|\.asmx|\.ashx|\.json|\.csv|\.aspx|url *:|http(s)?://|WebMethod|postMessage|onmessage' "$f" | grep -vE '^\s*[0-9]+:\s*//' | cut -c1-260 | head -80
+          pr() { echo "######## $1 lines $2-$3"; sed -n "$2,$3p" "js_$1" | cut -c1-240; }
+          for f in dwork_ajax.js shared_GETGEO.js village309.js ns1hosp_worker.js masterpage.js InsectTable.js InsectTour.js; do echo "######## FULL $f"; cat js_$f | cut -c1-240; done
+          echo "######## FULL main.js"; cat js_main.js | iconv -c -f utf-8 -t utf-8 | cut -c1-240
+          pr pathmap.js 1 80
+          pr pathmap.js 270 330
+          pr DengueCluster.js 1 120
+          pr DengueCluster.js 235 365
+          pr InsectCluster.js 596 640
+          pr InsectCluster.js 840 870
+          pr Insectarea.js 590 700
+          pr loadmalayer.js 125 165
+          pr loadmalayer.js 285 320
+          pr ns1hosp.js 140 185
+          pr timemap.js 60 100
+          pr timemap.js 335 375
+          pr general.js 60 95
+          echo "##### misc static probes"
+          for u in data/geojson/cdcdengueVillagePoint.json data/InsectTable/TableColumns.json data/geojson/village_full_comp.json data/dengue_layer/vill309_comp.json data/ns1/ns1hosp_20160603_lzstring.json data/geojson/city.json; do
+            curl -sS -L --connect-timeout 15 --max-time 90 -o /tmp/x -D /tmp/h -w "$u -> %{http_code} %{size_download}\n" "$B/$u"; grep -iE '^(content-type|access-control|last-modified)' /tmp/h; head -c 300 /tmp/x; echo
+          done
+          for u in https://zone.cdc.gov.tw/map/csv/cdcdengueData_test.csv https://zone.cdc.gov.tw/map/geojson/cdcdengueVillage.json https://epimap.cdc.gov.tw/cdcdengue; do
+            curl -sS -L --connect-timeout 15 --max-time 90 -H "Origin: https://ancientsky.github.io" -o /tmp/x -D /tmp/h -w "$u -> %{http_code} %{size_download}\n" "$u"; grep -iE '^(HTTP|content-type|access-control|last-modified)' /tmp/h; head -c 600 /tmp/x; echo
           done
