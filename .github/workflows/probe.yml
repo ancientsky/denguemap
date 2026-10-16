@@ -19,15 +19,9 @@ jobs:
           for r in resource/__customized/1.0/epicurve.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/timemap.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/InsectCluster.js resource/__customized/1.0/Insectarea.js; do
             curl -sS -L --connect-timeout 15 --max-time 60 -o "js_$(basename $r)" -w "$r -> %{http_code} %{size_download}\n" "$B/$r"
           done
-          pr() { echo "######## $1 lines $2-$3"; sed -n "$2,$3p" "js_$1" | cut -c1-230; }
-          pr epicurve.js 1 215
-          pr DengueCluster.js 395 425
-          pr DengueCluster.js 525 545
-          pr DengueCluster.js 595 640
-          pr DengueCluster.js 715 745
-          pr timemap.js 285 335
-          pr loadmalayer.js 319 345
-          pr InsectCluster.js 690 835
+          grep -n "set_condition" js_epicurve.js | head
+          awk '/function set_condition/{f=1} f{print; n++} n>45{exit}' js_epicurve.js | cut -c1-200
+          grep -nE "villagestr|datelsit|\\.日期|地區|village" js_loadmalayer.js | sed -n 1,25p | cut -c1-220
           pip install lzstring >/dev/null 2>&1
           cat > st.py <<'PY'
           import json,urllib.request,collections,sys
@@ -37,7 +31,10 @@ jobs:
           B='https://cdcdengue.azurewebsites.net/'
           def get(u):
               r=urllib.request.urlopen(urllib.request.Request(B+u,headers={'Origin':'https://ancientsky.github.io','Accept-Encoding':'gzip','User-Agent':'Mozilla/5.0'}),timeout=120)
-              b=r.read(); return r.status,dict((k,v) for k,v in r.headers.items() if k.lower() in('content-type','content-encoding','content-length','last-modified','access-control-allow-origin','etag','cache-control')),b
+              b=r.read()
+              if b[:2]==b'\x1f\x8b':
+                  import gzip; b=gzip.decompress(b)
+              return r.status,dict((k,v) for k,v in r.headers.items() if k.lower() in('content-type','content-encoding','content-length','last-modified','access-control-allow-origin','etag','cache-control')),b
           def summ(name,j):
               if isinstance(j,dict) and 'features' in j:
                   f=j['features']; print('  FeatureCollection n=',len(f),'other keys',{k:(v if k!='crs' else '...') for k,v in j.items() if k!='features'})
@@ -81,6 +78,98 @@ jobs:
               else: summ(name,j)
           PY
           python3 st.py 2>&1 | cut -c1-2800
+          cat > probe.py <<'PY'
+          import json,time,sys,urllib.request,urllib.error,datetime,collections,gzip
+          B='https://cdcdengue.azurewebsites.net/'
+          ORIGIN='https://ancientsky.github.io'
+          def call(path,body=None,method=None,ctype='application/json; charset=utf-8',timeout=120,gz=False):
+              data=None
+              if body is not None: data=body.encode() if isinstance(body,str) else json.dumps(body).encode()
+              hdr={'Origin':ORIGIN,'User-Agent':'Mozilla/5.0'}
+              if gz: hdr['Accept-Encoding']='gzip'
+              if data is not None or method=='POST': hdr['Content-Type']=ctype
+              req=urllib.request.Request(path if path.startswith('http') else B+path,data=data,headers=hdr,method=method or ('POST' if data is not None else 'GET'))
+              t=time.time()
+              try:
+                  r=urllib.request.urlopen(req,timeout=timeout); code=r.status; h=r.headers; b=r.read()
+              except urllib.error.HTTPError as e:
+                  code=e.code; h=e.headers; b=e.read()
+              except Exception as e:
+                  print('  EXC',repr(e)); return None,None,b''
+              dt=time.time()-t
+              keep={k:v for k,v in h.items() if k.lower() in ('content-type','content-length','access-control-allow-origin','content-encoding','cache-control','last-modified')}
+              if b[:2]==b'\x1f\x8b': b=gzip.decompress(b)
+              print('  status',code,'bytes(decoded)',len(b),'secs %.1f'%dt,keep)
+              return code,h,b
+          def stats(recs):
+              if not recs or not isinstance(recs[0],dict): return
+              keys=list(recs[0].keys()); print('  KEYS:',keys)
+              for k in keys:
+                  vals=[r.get(k) for r in recs if isinstance(r,dict)]
+                  try: u=collections.Counter(vals)
+                  except TypeError: continue
+                  if len(u)<=25: print('   ',k,'->',dict(u.most_common(25)))
+                  else:
+                      sv=[v for v in vals if isinstance(v,(str,int,float))]
+                      try: print('   ',k,'-> %d unique, min=%r max=%r'%(len(u),min(sv),max(sv)))
+                      except Exception: print('   ',k,'-> %d unique'%len(u))
+          def show(b,nrec=3,raw=800):
+              s=b.decode('utf-8','replace')
+              print('  RAW[:%d]:'%raw,s[:raw].replace(chr(10),' '))
+              try: j=json.loads(s)
+              except Exception as e: print('  not json',e); return None
+              inner=j
+              if isinstance(j,dict) and 'd' in j:
+                  d=j['d']
+                  if isinstance(d,str):
+                      try: inner=json.loads(d)
+                      except Exception as e: print('  inner not json',e,d[:300]); return d
+                  else: inner=d
+              if isinstance(inner,dict) and 'features' in inner:
+                  f=inner['features']; print('  GEOJSON features:',len(f),{k:inner[k] for k in inner if k not in('features','crs')})
+                  for x in f[:nrec]: print('  FEATURE props',json.dumps(x.get('properties'),ensure_ascii=False)[:900],'geom',json.dumps(x.get('geometry'))[:160])
+                  stats([x.get('properties',{}) for x in f])
+              elif isinstance(inner,list):
+                  print('  LIST len',len(inner))
+                  for x in inner[:nrec]: print('  REC',json.dumps(x,ensure_ascii=False)[:600])
+                  stats(inner)
+              else: print('  ',type(inner).__name__,json.dumps(inner,ensure_ascii=False)[:1200])
+              return inner
+          PY
+          cat > ep5.py <<'PY'
+          import sys; sys.path.insert(0,'.')
+          from probe import *
+          def P(t): print(chr(10)+'=== '+t)
+          for iv in ['0','1']:
+            for cc in ['all','07']:
+              for imm in ['0','1','all']:
+                if iv=='1' and (cc!='all' or imm!='0'): continue
+                P('GetDengueData interval=%s city=%s imm=%s gender=all'%(iv,cc,imm))
+                c,h,b=call('DengueData.asmx/GetDengueData',"{interval:'%s', citycode:'%s', gender:'all', immigration: '%s'}"%(iv,cc,imm))
+                if b: show(b)
+          for iv,cc,imm,g in [('0','all','0','all'),('1','all','0','all'),('1','all','all','all'),('0','07','all','M'),('1','31','1','F')]:
+              P('GetAggreateData interval=%s city=%s imm=%s gender=%s'%(iv,cc,imm,g))
+              c,h,b=call('DengueData.asmx/GetAggreateData',"{interval:'%s', citycode:'%s', gender:'%s', immigration: '%s'}"%(iv,cc,g,imm))
+              if b:
+                  j=show(b,nrec=3)
+                  if isinstance(j,list) and j and 'sickdate' in j[0]:
+                      print('  first',j[0],'last',j[-1],'sum count',sum(x.get('count',0) for x in j))
+          for cc in ['32','31','05','07']:
+              P('GetDengueClusterCODE citycode=%s'%cc)
+              c,h,b=call('DengueData.asmx/GetDengueClusterCODE',"{citycode:'%s'}"%cc)
+              if b: show(b,nrec=2)
+              P('GetDengueClusterCODE1 citycode=%s'%cc)
+              c,h,b=call('DengueData.asmx/GetDengueClusterCODE1',"{citycode:'%s'}"%cc)
+              if b: show(b,nrec=2)
+          for vs in ['高雄市前鎮區草衙里','台南市中西區赤嵌里','台南市中西區赤嵌里,台南市東區東安里']:
+              P('GetVillageData %s'%vs)
+              c,h,b=call('DengueData.asmx/GetVillageData',"{startdate:'20260901', villagestr:'%s', immigration:'0'}"%vs)
+              if b: show(b,nrec=3)
+          P('GetVillageData 2025 start')
+          c,h,b=call('DengueData.asmx/GetVillageData',"{startdate:'20250801', villagestr:'高雄市前鎮區草衙里', immigration:'2'}")
+          if b: show(b,nrec=3)
+          PY
+          python3 ep5.py 2>&1 | cut -c1-2200
           echo "##### MORE endpoint probes"
           cat > ep4.py <<'PY'
           import sys; sys.path.insert(0,'.')
