@@ -10,37 +10,46 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: mirror old site pages and scripts
+      - name: round1 nav and data calls
         shell: bash
         run: |
           set +e
           mkdir -p site && cd site
           B=https://cdcdengue.azurewebsites.net
-          for p in "" default.aspx ma.aspx denguecluster.aspx VectorMap.aspx imported.aspx trend.aspx Trend.aspx about.aspx data.aspx DengueData.asmx; do
+          for p in "" ma.aspx denguecluster.aspx VectorMap.aspx imported.aspx; do
             f="page_${p:-index}.html"
             curl -sS -L --connect-timeout 15 --max-time 60 -o "$f" -w "$p -> %{http_code} %{size_download}\n" "$B/$p"
           done
-          # collect script/css/json/asmx/ashx references
-          grep -hoiE '(src|href)="[^"]+"' page_*.html | sed -E 's/^(src|href)="//I; s/"$//' | grep -viE '^(https?:)?//|^#|^mailto|^javascript' | sort -u > refs.txt
-          grep -hoiE '["'"'"'][^"'"'"' ]*\.(asmx|ashx|json|csv|geojson|aspx)[^"'"'"' ]*["'"'"']' page_*.html | sort -u > endpoints_html.txt
-          while read -r r; do
-            case "$r" in *.js*|*.json*|*.css*) ;; *) continue;; esac
-            out="asset_$(echo "$r" | tr '/?=&' '____')"
+          echo "##### NAV (a href) per page"
+          for f in page_*.html; do echo "== $f"; grep -oiE '<a [^>]*>' "$f" | head -60; done
+          echo "##### SELECTS"
+          python3 - <<'PY'
+          import re,glob
+          for f in sorted(glob.glob('page_*.html')):
+              t=open(f,encoding='utf-8',errors='replace').read()
+              print('==',f,len(t))
+              for m in re.finditer(r'<select[^>]*>.*?</select>',t,re.S):
+                  s=m.group(0)
+                  print(re.search(r'<select[^>]*>',s).group(0))
+                  print('  ',re.findall(r'<option[^>]*value="([^"]*)"[^>]*>\s*([^<]*)',s))
+              for m in re.finditer(r'<input[^>]*>',t):
+                  print('INPUT',m.group(0)[:200])
+              for m in re.finditer(r'<script(?![^>]*src)[^>]*>(.*?)</script>',t,re.S):
+                  b=m.group(1)
+                  if 'ajax' in b or 'asmx' in b or 'getJSON' in b or 'fetch' in b:
+                      print('INLINE SCRIPT with data call:',b[:3000])
+          PY
+          echo "##### SCRIPT LIST"
+          grep -ohiE '<script[^>]*src="[^"]*"' page_*.html | sed -E 's/.*src="//; s/"$//' | sort -u > srcs.txt
+          cat srcs.txt
+          for r in $(cat srcs.txt) resource/Semantic-UI/2.0.3/pathmap.js resource/__workers/1.0/shared_GETGEO.js resource/__workers/1.0/village309.js resource/__workers/1.0/ns1hosp_worker.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/InsectCluster.js resource/__customized/1.0/InsectTable.js resource/__customized/1.0/InsectTour.js resource/__customized/1.0/Insectarea.js resource/__customized/1.0/area.js resource/__customized/1.0/general.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/ma.js resource/__customized/1.0/main.js resource/__customized/1.0/masterpage.js resource/__customized/1.0/timemap.js resource/__customized/1.0/ns1hosp.js; do
+            case "$r" in http*|//*) continue;; esac
+            out="js_$(echo "${r%%\?*}" | tr '/' '_')"
+            [ -f "$out" ] && continue
             curl -sS -L --connect-timeout 15 --max-time 60 -o "$out" -w "$r -> %{http_code} %{size_download}\n" "$B/${r#/}"
-          done < refs.txt
-          grep -hoiE '["'"'"'][^"'"'"' ]*\.(asmx|ashx|json|csv|geojson|aspx|svc)[^"'"'"' ]*["'"'"']|url *: *["'"'"'][^"'"'"']+["'"'"']' asset_* page_*.html | sort | uniq -c | sort -rn > endpoints.txt
-          echo "### endpoints"; cat endpoints.txt
-          echo "### external hosts"; grep -hoE 'https?://[a-zA-Z0-9.-]+' page_*.html asset_* | sort | uniq -c | sort -rn | head -40
-          echo "### refs"; cat refs.txt
-          echo "### sizes"; ls -la
-          for f in asset_*; do
-            case "$f" in *jquery*|*semantic*|*Semantic*|*font-awesome*|*leaflet*|*highcharts*|*Highcharts*|*echarts*|*bootstrap*|*.css*) continue;; esac
-            echo "######## FILE $f"; head -c 20000 "$f" | iconv -f utf-8 -t utf-8 -c; echo
           done
-          for f in page_*.html; do echo "######## PAGE $f"; sed -e 's/<[^>]*>/ /g' "$f" | tr -s ' \t\r' | grep -v '^ *$' | head -c 4000; echo; grep -oiE '<script[^>]*src="[^"]*"' "$f"; done
-          echo "### od.cdc http"; curl -sS --connect-timeout 10 -o /dev/null -w "%{http_code}\n" http://od.cdc.gov.tw/eic/Dengue_Daily.csv
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: oldsite
-          path: site/
-          retention-days: 3
+          echo "##### data-call grep in custom js and pages"
+          for f in js_resource___customized* js_resource___workers* js_resource_Semantic-UI_2.0.3_pathmap.js page_*.html; do
+            echo "=========== $f ($(wc -c <$f) bytes)"
+            grep -nE 'ajax|\$\.get|\$\.post|getJSON|fetch\(|XMLHttpRequest|importScripts|\.asmx|\.ashx|\.json|\.csv|\.aspx|url *:|http(s)?://|WebMethod|postMessage|onmessage' "$f" | grep -vE '^\s*[0-9]+:\s*//' | cut -c1-260 | head -80
+          done
