@@ -10,162 +10,112 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: round3 trend code and endpoint calls
+      - name: round4 code dump, static data structure, rate limit
         shell: bash
         run: |
           set +e
           mkdir -p site && cd site
           B=https://cdcdengue.azurewebsites.net
-          for r in resource/__customized/1.0/index.js resource/__customized/1.0/epicurve.js resource/__workers/1.0/clusterLastestCode1.js resource/__workers/1.0/city_full.js resource/__workers/1.0/village_point_full.js resource/__workers/1.0/village_full.js resource/__workers/1.0/cityTown_full.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/timemap.js resource/__customized/1.0/InsectCluster.js resource/Semantic-UI/2.0.3/pathmap.js; do
+          for r in resource/__customized/1.0/epicurve.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/timemap.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/InsectCluster.js resource/__customized/1.0/Insectarea.js; do
             curl -sS -L --connect-timeout 15 --max-time 60 -o "js_$(basename $r)" -w "$r -> %{http_code} %{size_download}\n" "$B/$r"
           done
-          echo "##### all asmx op names / other data urls in all js"
-          grep -ohE 'asmx/[A-Za-z_]+|epimap[^"'"'"' ]*|operation[^,}]{0,60}' js_*.js | sort | uniq -c
-          echo "##### Index.aspx html select/inputs"
-          curl -sS -L --max-time 60 "$B/Index.aspx" -o idx.html
-          python3 - <<'PY'
-          import re
-          t=open('idx.html',encoding='utf-8',errors='replace').read()
-          for m in re.finditer(r'<select[^>]*>.*?</select>',t,re.S):
-              s=m.group(0); print(re.search(r'<select[^>]*>',s).group(0)); print(re.findall(r'<option[^>]*value="([^"]*)"[^>]*>\s*([^<]*)',s))
-          print(re.findall(r'<(?:input|div|span|table)[^>]*id="([^"]*)"',t))
-          PY
-          echo "######## FULL index.js"; cat js_index.js | cut -c1-220
-          echo "######## epicurve.js data-call context"
-          grep -nE 'ajax|asmx|getJSON|url|\.d\b|parseJSON|postMessage|Worker' js_epicurve.js | cut -c1-220 | head -60
-          echo "######## clusterLastestCode1.js"; cat js_clusterLastestCode1.js | cut -c1-220
-          echo "######## village_point_full.js"; cat js_village_point_full.js | cut -c1-220
-          echo "######## DengueCluster.js field usage"; grep -nE 'properties\.|\.d\b|parseJSON|features' js_DengueCluster.js | cut -c1-200 | head -60
-          echo "######## timemap.js field usage"; grep -nE 'properties\.|\.d\b|parseJSON|features|\.sickdate|\.sick|\.casetype|\.type' js_timemap.js | cut -c1-200 | head -60
-          echo "######## pathmap.js field usage"; grep -nE 'results\[|\.country|\.sickdate|\.count|metadata|data\[k\]' js_pathmap.js | cut -c1-200 | head -40
-          echo "######## loadmalayer villagestr"; grep -nE 'villagestr|markerdate|results\[|\.sickdate|\.d\b' js_loadmalayer.js | cut -c1-220 | head -50
-          echo "######## InsectCluster properties usage"; grep -nE 'properties|weeks|\.dS|\.dE|ovi|BI|dS|cases' js_InsectCluster.js | cut -c1-200 | head -60
-          cat > probe.py <<'PY'
-          import json,time,sys,urllib.request,urllib.error,datetime,collections
+          pr() { echo "######## $1 lines $2-$3"; sed -n "$2,$3p" "js_$1" | cut -c1-230; }
+          pr epicurve.js 1 215
+          pr DengueCluster.js 395 425
+          pr DengueCluster.js 525 545
+          pr DengueCluster.js 595 640
+          pr DengueCluster.js 715 745
+          pr timemap.js 285 335
+          pr loadmalayer.js 319 345
+          pr InsectCluster.js 690 835
+          pip install lzstring >/dev/null 2>&1
+          cat > st.py <<'PY'
+          import json,urllib.request,collections,sys
+          try:
+              import lzstring; lz=lzstring.LZString()
+          except Exception as e: lz=None; print('no lzstring',e)
           B='https://cdcdengue.azurewebsites.net/'
-          ORIGIN='https://ancientsky.github.io'
-          def call(path,body=None,method=None,ctype='application/json; charset=utf-8',timeout=120,raw=False):
-              data=None
-              if body is not None: data=body.encode() if isinstance(body,str) else json.dumps(body).encode()
-              hdr={'Origin':ORIGIN,'User-Agent':'Mozilla/5.0'}
-              if data is not None or method=='POST': hdr['Content-Type']=ctype
-              req=urllib.request.Request(path if path.startswith('http') else B+path,data=data,headers=hdr,method=method or ('POST' if data is not None else 'GET'))
-              t=time.time()
+          def get(u):
+              r=urllib.request.urlopen(urllib.request.Request(B+u,headers={'Origin':'https://ancientsky.github.io','Accept-Encoding':'gzip','User-Agent':'Mozilla/5.0'}),timeout=120)
+              b=r.read(); return r.status,dict((k,v) for k,v in r.headers.items() if k.lower() in('content-type','content-encoding','content-length','last-modified','access-control-allow-origin','etag','cache-control')),b
+          def summ(name,j):
+              if isinstance(j,dict) and 'features' in j:
+                  f=j['features']; print('  FeatureCollection n=',len(f),'other keys',{k:(v if k!='crs' else '...') for k,v in j.items() if k!='features'})
+                  print('  prop keys',list(f[0].get('properties',{}).keys()) if f else None)
+                  print('  geom',collections.Counter(x['geometry']['type'] if x.get('geometry') else None for x in f))
+                  for x in f[:2]:
+                      pr=x.get('properties'); g=json.dumps(x.get('geometry'))
+                      print('  FEAT props=',json.dumps(pr,ensure_ascii=False)[:1200],'geom=',g[:160])
+              elif isinstance(j,list):
+                  print('  list n=',len(j)); [print('  REC',json.dumps(x,ensure_ascii=False)[:500]) for x in j[:3]]
+              else: print('  ',type(j).__name__,json.dumps(j,ensure_ascii=False)[:800])
+          for name,comp in [('data/geojson/city_ori.json',0),('data/geojson/citytown_ori.json',0),('data/geojson/citytown.json',0),('data/geojson/village.json',0),('data/geojson/citytown_full_comp.json',1),('data/geojson/village_full_comp.json',1),('data/dengue_layer/vill309.json',0),('data/dengue_layer/vill309_comp.json',1),('data/ns1/ns1hosp_20160603_lzstring.json',1),('data/dengue_layer/噴藥點位.json',0),('data/dengue_layer/臺南市及高雄市加強孳清.json',0),('data/geojson/cdcdengueVillage.json',0),('data/geojson/village_ori_point.json',0),('data/geojson/cdcdengueVillagePoint.json',0),('data/csv/cdcdengueData.csv',0),('csv/cdcdengueData_test.csv',0)]:
+              print('\n=== STATIC',name)
+              try: c,h,b=get(urllib.parse.quote(name))
+              except Exception as e: print('  ERR',e); continue
+              print('  status',c,'bytes',len(b),h)
               try:
-                  r=urllib.request.urlopen(req,timeout=timeout); code=r.status; h=r.headers; b=r.read()
-              except urllib.error.HTTPError as e:
-                  code=e.code; h=e.headers; b=e.read()
+                  s=b.decode('utf-8')
+                  if comp:
+                      s=lz.decompressFromUTF16(s); print('  decompressed chars',len(s))
+                  j=json.loads(s)
               except Exception as e:
-                  print('  EXC',repr(e)); return None,None,b''
-              dt=time.time()-t
-              keep={k:v for k,v in h.items() if k.lower() in ('content-type','content-length','access-control-allow-origin','access-control-allow-methods','access-control-allow-headers','access-control-allow-credentials','cache-control','last-modified','server','x-powered-by','content-encoding','vary','etag')}
-              print('  status',code,'bytes',len(b),'secs %.1f'%dt,keep)
-              return code,h,b
-          def stats(recs):
-              if not recs or not isinstance(recs[0],dict): return
-              keys=list(recs[0].keys()); print('  KEYS:',keys)
-              for k in keys:
-                  vals=[r.get(k) for r in recs if isinstance(r,dict)]
-                  try: u=collections.Counter(vals)
-                  except TypeError: continue
-                  if len(u)<=40: print('   ',k,'->',dict(u.most_common(40)))
-                  else:
-                      sv=[v for v in vals if isinstance(v,(str,int,float))]
-                      try: print('   ',k,'-> %d unique, min=%r max=%r'%(len(u),min(sv),max(sv)))
-                      except Exception: print('   ',k,'-> %d unique'%len(u))
-          def show(b,label='',nrec=3):
-              s=b.decode('utf-8','replace')
-              print('  RAW[:1500]:',s[:1500].replace('\n','\\n'))
-              try: j=json.loads(s)
-              except Exception as e: print('  not json',e); return None
-              inner=j
-              if isinstance(j,dict) and 'd' in j:
-                  d=j['d']
-                  print('  outer keys',list(j.keys()),'d type',type(d).__name__)
-                  if isinstance(d,str):
-                      try: inner=json.loads(d)
-                      except Exception as e: print('  inner not json',e,d[:300]); return d
-                  else: inner=d
-              if isinstance(inner,dict) and 'features' in inner:
-                  f=inner['features']; print('  GEOJSON features:',len(f),'top keys',[k for k in inner if k!='features'],{k:inner[k] for k in inner if k not in('features','crs')})
-                  recs=[x.get('properties',{}) for x in f]
-                  print('  geom types',collections.Counter(x.get('geometry',{}).get('type') for x in f if x.get('geometry')))
-                  for x in f[:nrec]:
-                      g=json.dumps(x.get('geometry'))[:200]
-                      print('  FEATURE props',json.dumps(x.get('properties'),ensure_ascii=False)[:900],'geom',g)
-                  stats(recs)
-              elif isinstance(inner,list):
-                  print('  LIST len',len(inner))
-                  for x in inner[:nrec]: print('  REC',json.dumps(x,ensure_ascii=False)[:700])
-                  stats(inner)
-              elif isinstance(inner,dict):
-                  print('  DICT keys',list(inner.keys())[:30])
-                  print('  ',json.dumps(inner,ensure_ascii=False)[:1500])
-              return inner
+                  print('  not json/decomp:',repr(e)[:200],b[:300]); continue
+              if name.endswith('VillagePoint.json'):
+                  print('  top keys',[k for k in j if k!='features'], {k:j[k] for k in j if k not in('features','crs')})
+                  f=j['features']; print('  n',len(f),'COUNTY counts',collections.Counter(x['properties'].get('COUNTY') for x in f))
+                  for k in f[0]['properties']:
+                      if k=='weeks': continue
+                      vals=[x['properties'].get(k) for x in f]
+                      try:
+                          u=collections.Counter(vals)
+                          if len(u)<=12: print('   ',k,dict(u))
+                      except TypeError: pass
+                  for x in f[:2]: print('  FEAT',json.dumps(x,ensure_ascii=False)[:2500])
+                  # a Tainan/Kaohsiung one with positive data
+                  for x in f:
+                      p=x['properties']
+                      if p.get('background_color')=='red':
+                          print('  RED FEAT',json.dumps(x,ensure_ascii=False)[:2500]); break
+                  print('  weeks lens',collections.Counter(len(x['properties'].get('weeks',[])) for x in f))
+              else: summ(name,j)
           PY
-          cat > run3.py <<'PY'
+          python3 st.py 2>&1 | cut -c1-2800
+          echo "##### MORE endpoint probes"
+          cat > ep4.py <<'PY'
           import sys; sys.path.insert(0,'.')
           from probe import *
+          import threading
           today=datetime.date.today(); fmt=lambda d:d.strftime('%Y/%m/%d')
-          d30=today-datetime.timedelta(days=30)
-          print('TODAY',today)
-          def P(title): print('\n=== '+title)
-          # CORS preflight on the asmx
-          P('OPTIONS preflight GetDengueLocation')
-          req=urllib.request.Request(B+'DengueData.asmx/GetDengueLocation',method='OPTIONS',headers={'Origin':ORIGIN,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'})
-          try:
-              r=urllib.request.urlopen(req,timeout=30); print(' ',r.status,dict(r.headers))
-          except urllib.error.HTTPError as e: print('  HTTPError',e.code,dict(e.headers))
-          except Exception as e: print('  EXC',e)
-          # Case points
-          for (cc,imm,s,e,label) in [
-              ('07','0',fmt(d30),fmt(today),'Kaohsiung local last30'),
-              ('all','0',fmt(d30),fmt(today),'all local last30'),
-              ('all','1',fmt(d30),fmt(today),'all imported last30'),
-              ('all','2',fmt(d30),fmt(today),'all both last30'),
-              ('all','0','2026/01/01',fmt(today),'all local 2026 YTD'),
-              ('all','1','2026/01/01',fmt(today),'all imported 2026 YTD'),
-              ('all','2','2026/01/01',fmt(today),'all both 2026 YTD'),
-              ('all','2','2025/01/01','2025/12/31','all both 2025 full'),
-              ('all','0','2015/01/01',fmt(today),'all local since 2015 (big)'),
-          ]:
-              P('GetDengueLocation '+label)
-              body="{citycode:'%s', immigration: '%s', startDate: '%s', endDate: '%s' }"%(cc,imm,s,e)
-              print('  body',body)
-              c,h,b=call('DengueData.asmx/GetDengueLocation',body)
-              if b: show(b)
-          P('GetDengueLocation strict-JSON body variant (shared_GETGEO adds operation key)')
-          c,h,b=call('DengueData.asmx/GetDengueLocation',{"operation":"GetDengueLocation","citycode":"07","immigration":"2","startDate":fmt(d30),"endDate":fmt(today)})
-          if b: print('  ',b[:300])
-          P('GET variant of GetDengueLocation (no body)')
-          c,h,b=call('DengueData.asmx/GetDengueLocation?citycode=07&immigration=2&startDate=2026/09/01&endDate=2026/10/16',method='GET')
-          print('  ',b[:300])
-          # Cluster
-          P('GetDengueClusterEnable empty body')
-          c,h,b=call('DengueData.asmx/GetDengueClusterEnable','')
-          if b: show(b)
-          P('GetDengueClusterEnable {} body')
-          c,h,b=call('DengueData.asmx/GetDengueClusterEnable','{}')
-          if b: show(b)
-          for cc in ['31','01','07','05','43','03','32','all']:
-              P('GetDengueCluster_New '+cc)
-              c,h,b=call('DengueData.asmx/GetDengueCluster_New',"{citycode:'%s'}"%cc)
-              if b: show(b,nrec=2)
-          # Imported
-          P('GetImportedData empty')
-          c,h,b=call('DengueData.asmx/GetImportedData','')
-          imp=show(b) if b else None
-          P('GetImportedData {}')
-          c,h,b=call('DengueData.asmx/GetImportedData','{}')
-          print('  ',b[:200])
-          if isinstance(imp,list) and imp:
-              ct=collections.Counter((x.get('country_code'),x.get('country_name')) for x in imp)
-              print('  top countries',ct.most_common(10))
-              yrs=collections.Counter(x.get('sickdate','')[:4] for x in imp); print('  by year',sorted(yrs.items()))
-              cc0,cn0=ct.most_common(1)[0][0]
-              P('GetIntEicdemic %s %s'%(cc0,cn0))
-              c,h,b=call('DengueData.asmx/GetIntEicdemic',"{countrycode:'%s', countryname:'%s'}"%(cc0,cn0))
-              if b: show(b)
-          open('done3','w').write('1')
+          def P(t): print('\n=== '+t)
+          for cc,imm,s,e,lab in [('01-31','0','2015/01/01','2026/10/16','01-31 local since 2015'),('05-07-43','2','2026/01/01','2026/10/16','05-07-43 both 2026'),('07','0','2025/01/01','2025/12/31','07 local 2025'),('31','0','2020/01/01','2026/10/16','31 local 2020+'),('all','2','1998/01/01','2026/10/16','all both from 1998 (huge?)'),('99','0','2026/01/01','2026/10/16','invalid code'),('all','0','2026/10/16','2026/01/01','reversed range')]:
+              P('GetDengueLocation '+lab)
+              c,h,b=call('DengueData.asmx/GetDengueLocation',"{citycode:'%s', immigration: '%s', startDate: '%s', endDate: '%s' }"%(cc,imm,s,e))
+              if b:
+                  try:
+                      d=json.loads(json.loads(b)['d']); print('  records',len(d)); print('  first',d[:1],'last',d[-1:])
+                      yrs=collections.Counter(x['sickdate'][:4] for x in d); print('  by year',sorted(yrs.items()))
+                  except Exception as ex: print('  parse fail',ex,b[:300])
+          P('gzip support')
+          req=urllib.request.Request(B+'DengueData.asmx/GetDengueLocation',data=b"{citycode:'all', immigration: '0', startDate: '2020/01/01', endDate: '2026/10/16' }",headers={'Content-Type':'application/json; charset=utf-8','Accept-Encoding':'gzip'})
+          r=urllib.request.urlopen(req,timeout=120); bb=r.read(); print('  content-encoding',r.headers.get('Content-Encoding'),'bytes',len(bb))
+          P('RATE: 40 sequential')
+          codes=collections.Counter(); t=time.time()
+          for i in range(40):
+              try:
+                  r=urllib.request.urlopen(urllib.request.Request(B+'DengueData.asmx/GetDengueLocation',data=("{citycode:'all', immigration: '2', startDate: '2026/09/%02d', endDate: '2026/10/16' }"%(1+i%20)).encode(),headers={'Content-Type':'application/json; charset=utf-8'}),timeout=60); codes[r.status]+=1; r.read()
+              except urllib.error.HTTPError as e: codes[e.code]+=1
+              except Exception as e: codes[repr(e)[:60]]+=1
+          print('  codes',dict(codes),'secs %.1f'%(time.time()-t))
+          P('RATE: 30 parallel')
+          codes=collections.Counter(); lock=threading.Lock()
+          def w(i):
+              try:
+                  r=urllib.request.urlopen(urllib.request.Request(B+'DengueData.asmx/GetDengueLocation',data=("{citycode:'all', immigration: '2', startDate: '2026/0%d/01', endDate: '2026/10/16' }"%(1+i%9)).encode(),headers={'Content-Type':'application/json; charset=utf-8'}),timeout=90); k=r.status; r.read()
+              except urllib.error.HTTPError as e: k=e.code
+              except Exception as e: k=repr(e)[:60]
+              with lock: codes[k]+=1
+          t=time.time(); th=[threading.Thread(target=w,args=(i,)) for i in range(30)]; [x.start() for x in th]; [x.join() for x in th]
+          print('  codes',dict(codes),'secs %.1f'%(time.time()-t))
           PY
-          python3 run3.py 2>&1 | cut -c1-2500
+          python3 ep4.py 2>&1 | cut -c1-2500
