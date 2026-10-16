@@ -1,0 +1,38 @@
+{
+  "name": "denguemap",
+  "private": true,
+  "version": "2.0.0",
+  "description": "登革熱地圖（現代化版）— Taiwan dengue map, static site on GitHub Pages",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "data": "node scripts/data/run.mjs",
+    "fixtures": "node scripts/fixtures/make-fixtures.mjs"
+  },
+  "dependencies": {
+    "echarts": "6.1.0",
+    "maplibre-gl": "6.14.0",
+    "topojson-client": "3.1.0"
+  },
+  "devDependencies": {
+    "@types/geojson": "7946.0.16",
+    "@types/topojson-client": "3.1.5",
+    "@types/topojson-specification": "1.0.5",
+    "lz-string": "1.5.0",
+    "playwright-core": "1.64.1",
+    "taiwan-atlas": "2021.9.20",
+    "topojson-server": "3.0.1",
+    "topojson-simplify": "3.0.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.5"
+  }
+}
