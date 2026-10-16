@@ -10,40 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: round6 selects, lz decode, village data, cluster codes
+      - name: round7 misc
         shell: bash
         run: |
           set +e
           mkdir -p site && cd site
           B=https://cdcdengue.azurewebsites.net
-          for p in "" Index.aspx VectorMap.aspx DengueCluster.aspx Imported.aspx ma.aspx; do curl -sS -L --max-time 60 -o "pg_${p:-root}.html" "$B/$p"; done
-          python3 - <<'PY'
-          import re,glob
-          for f in sorted(glob.glob('pg_*.html')):
-              t=open(f,encoding='utf-8',errors='replace').read()
-              for m in re.finditer(r'<select[^>]*id="([^"]*)"[^>]*>(.*?)</select>',t,re.S):
-                  print(f,m.group(1),re.findall(r'<option[^>]*value="([^"]*)"[^>]*>\s*([^<]*?)\s*<',m.group(2)))
-          PY
-          curl -sS -L --max-time 60 -o lz-string.js "$B/resource/lzstring/1.4.4/lz-string.js"
-          for u in data/geojson/citytown_full_comp.json data/geojson/village_full_comp.json data/dengue_layer/vill309_comp.json data/ns1/ns1hosp_20160603_lzstring.json; do
-            curl -sS -L --compressed --max-time 120 -o "lz_$(basename $u)" "$B/$u"
-          done
-          curl -sS -L --compressed --max-time 120 -o village.json "$B/data/geojson/village.json"
-          cat > dec.js <<'JS'
-          const LZ=require('./lz-string.js'); const fs=require('fs');
-          for (const f of process.argv.slice(2)) {
-            const s=fs.readFileSync(f,'utf8'); const d=LZ.decompressFromUTF16(s);
-            console.log('\n=== LZ',f,'in chars',s.length,'out chars',d?d.length:null);
-            if(!d) continue; let j; try{ j=JSON.parse(d);}catch(e){console.log('parse fail',d.slice(0,300));continue}
-            if (j.features) { console.log('features',j.features.length,'top keys',Object.keys(j).filter(k=>k!='features'));
-              const g={}; j.features.forEach(x=>{const t=x.geometry&&x.geometry.type;g[t]=(g[t]||0)+1}); console.log('geom',g);
-              console.log('prop keys',Object.keys(j.features[0].properties));
-              for (const x of j.features.slice(0,3)) console.log('FEAT',JSON.stringify(x.properties),JSON.stringify(x.geometry).slice(0,150));
-              if (f.includes('ns1')) { const c={}; j.features.forEach(x=>{const k=x.properties.county||x.properties.COUNTY||x.properties['縣市']; c[k]=(c[k]||0)+1}); console.log('by county',c); }
-            } else console.log(Array.isArray(j)?('array '+j.length):typeof j, JSON.stringify(j).slice(0,800));
-          }
-          JS
-          node dec.js lz_citytown_full_comp.json lz_village_full_comp.json lz_vill309_comp.json lz_ns1hosp_20160603_lzstring.json 2>&1 | cut -c1-1500
           cat > probe.py <<'PY'
           import json,time,sys,urllib.request,urllib.error,datetime,collections,gzip
           B='https://cdcdengue.azurewebsites.net/'
@@ -102,59 +74,41 @@ jobs:
               else: print('  ',type(inner).__name__,json.dumps(inner,ensure_ascii=False)[:1200])
               return inner
           PY
-          cat > ep6.py <<'PY'
+          cat > ep7.py <<'PY'
           import sys; sys.path.insert(0,'.')
           from probe import *
           def P(t): print(chr(10)+'=== '+t)
-          vj=json.load(open('village.json'))
-          def pip(x,y,ring):
-              ins=False; n=len(ring); j=n-1
-              for i in range(n):
-                  xi,yi=ring[i][0],ring[i][1]; xj,yj=ring[j][0],ring[j][1]
-                  if ((yi>y)!=(yj>y)) and (x<(xj-xi)*(y-yi)/(yj-yi)+xi): ins=not ins
-                  j=i
-              return ins
-          def find(lat,lng):
-              for f in vj['features']:
-                  g=f['geometry']; polys=g['coordinates'] if g['type']=='MultiPolygon' else [g['coordinates']]
-                  for poly in polys:
-                      if pip(lng,lat,poly[0]): return f['properties']
-          # sample real cases
-          c,h,b=call('DengueData.asmx/GetDengueLocation',"{citycode:'07', immigration: '0', startDate: '2026/01/01', endDate: '2026/10/16' }")
-          cases=json.loads(json.loads(b)['d'])
-          c,h,b=call('DengueData.asmx/GetDengueLocation',"{citycode:'05', immigration: '0', startDate: '2015/08/01', endDate: '2015/10/16' }")
-          cases15=json.loads(json.loads(b)['d']); print('tainan 2015 cases',len(cases15))
-          tests=[]
-          for cs in (cases[:3],cases15[:3]):
-              for x in cs:
-                  v=find(float(x['lat']),float(x['lng'])); print('case',x,'-> village',v)
-                  if v: tests.append((x['sickdate'],v))
-          for sd,v in tests[:5]:
-              vs=v['COUNTY']+v['TOWN']+v['VILLAGE']
-              ds=sd.replace('/','')
-              y,m=int(ds[:4]),int(ds[4:6]); start='%04d%02d01'%(y,m)
-              P('GetVillageData villagestr=%s startdate=%s imm=0'%(vs,start))
-              c,h,b=call('DengueData.asmx/GetVillageData',"{startdate:'%s', villagestr:'%s', immigration:'0'}"%(start,vs))
-              if b: show(b,nrec=4)
-          P('GetVillageData villagestr empty')
-          c,h,b=call('DengueData.asmx/GetVillageData',"{startdate:'20260101', villagestr:'', immigration:'0'}")
-          if b: show(b,nrec=4)
-          P('GetVillageData startdate 20150801 multiple Tainan villages')
-          vs=','.join(sorted(set(v['COUNTY']+v['TOWN']+v['VILLAGE'] for _,v in tests))) or '台南市東區東安里'
-          c,h,b=call('DengueData.asmx/GetVillageData',"{startdate:'20150801', villagestr:'%s', immigration:'0'}"%vs)
-          if b: show(b,nrec=4)
-          codes=['01','03','05','07','11','12','22','31','32','33','34','35','37','38','39','40','43','45','46','47','48','49','90','91','all','00']
-          for cc in codes:
-              c,h,b=call('DengueData.asmx/GetDengueCluster_New',"{citycode:'%s'}"%cc)
-              s=b.decode('utf-8','replace')[:120]; print('  ClusterNew',cc,s)
-          P('Cluster with operation key like worker')
-          c,h,b=call('DengueData.asmx/GetDengueCluster_New',{"operation":"GetDengueClusterCODE1","citycode":"31"})
-          print('  ',b[:200])
-          P('GetDengueCluster_New empty body')
-          c,h,b=call('DengueData.asmx/GetDengueCluster_New','')
-          print('  ',b[:200])
-          P('other guesses')
-          for op in ['GetDengueLocationAll','GetDengueCluster','GetClusterData','GetNS1Hospital','GetVectorData','GetVillageIndex','GetWeekData']:
-              c,h,b=call('DengueData.asmx/'+op,'{}'); print('  ',op,c)
+          P('GetImportedData lat/lng + country stats')
+          c,h,b=call('DengueData.asmx/GetImportedData','')
+          imp=json.loads(json.loads(b)['d'])
+          print('unique lat/lng',collections.Counter((x['lat'],x['lng']) for x in imp).most_common(8))
+          print('date range',min(x['sickdate'] for x in imp),max(x['sickdate'] for x in imp))
+          print('by year x country top', sorted(collections.Counter((x['sickdate'][:4],x['country_code']) for x in imp).items())[:12])
+          P('local vs imported by year (all from 1998)')
+          for imm in ['0','1']:
+              c,h,b=call('DengueData.asmx/GetDengueLocation',"{citycode:'all', immigration: '%s', startDate: '1998/01/01', endDate: '2026/10/16' }"%imm)
+              d=json.loads(json.loads(b)['d']); print('imm',imm,'total',len(d)); print(' by year',sorted(collections.Counter(x['sickdate'][:4] for x in d).items()))
+              print(' unique coords',len(set((x['lat'],x['lng']) for x in d)))
+          P('VillagePoint: non-null stats via gz sizes')
+          for u in ['data/geojson/cdcdengueVillagePoint.json','data/geojson/cdcdengueVillage.json','data/geojson/village_ori_point.json','data/ns1/ns1hosp_20160603_lzstring.json','data/geojson/city_ori.json']:
+              c,h,b=call(u,gz=True)
+          c,h,b=call('data/geojson/cdcdengueVillagePoint.json')
+          j=json.loads(b)
+          nn=collections.Counter()
+          ex={}
+          for f in j['features']:
+              p=f['properties']
+              for k in ('mosquito_house_level','bucket_positive_rate','bucket_total_eggs','gravitrap_positive_rate'):
+                  if p.get(k) is not None: nn[k]+=1; ex.setdefault(k,p)
+              for w in p['weeks']:
+                  for k in ('m_level','b_pos','g_pos'):
+                      if w.get(k) is not None: nn['week_'+k]+=1; ex.setdefault('w'+k,(p['COUNTY'],p['TOWN'],p['VILLAGE'],w))
+          print('non-null counts',dict(nn))
+          for k,v in ex.items(): print(' EX',k,json.dumps(v,ensure_ascii=False)[:600])
+          print('mosquito_color',collections.Counter(f['properties']['mosquito_color'] for f in j['features']))
+          print('week colors',collections.Counter(w['color'] for f in j['features'] for w in f['properties']['weeks']))
+          P('other open files on host')
+          for u in ['robots.txt','sitemap.xml','data/','data/geojson/','crossdomain.xml','web.config','DengueData.asmx?wsdl','DengueData.asmx?WSDL','DengueData.asmx/GetDengueLocation?citycode=all']:
+              c,h,b=call(u); print('   ',u,c,b[:100])
           PY
-          python3 ep6.py 2>&1 | cut -c1-1800
+          python3 ep7.py 2>&1 | cut -c1-1800
