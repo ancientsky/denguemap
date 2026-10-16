@@ -1,0 +1,37 @@
+// Map colours come from CSS custom properties so light/dark stay in one place (src/styles/tokens.css).
+import { cssVar } from '../theme';
+
+export interface Palette {
+  local: string;
+  imported: string;
+  accent: string;
+  text: string;
+  halo: string;
+  sea: string;
+  land: string;
+  border: string;
+  borderStrong: string;
+  risk: [string, string, string, string];
+  heat: [string, string, string, string, string];
+  choropleth: [string, string, string, string, string, string];
+  space: string;
+}
+
+export function readPalette(): Palette {
+  const v = (n: string, d: string) => cssVar(n) || d;
+  return {
+    local: v('--local', '#d1193e'),
+    imported: v('--imported', '#d97706'),
+    accent: v('--accent', '#0f766e'),
+    text: v('--text', '#0f172a'),
+    halo: v('--map-halo', '#ffffff'),
+    sea: v('--map-sea', '#dfe9f2'),
+    land: v('--map-land', '#f8fafc'),
+    border: v('--map-border', '#c3ccd8'),
+    borderStrong: v('--map-border-strong', '#8a97a8'),
+    risk: [v('--risk-0', '#9aa5b4'), v('--risk-1', '#eab308'), v('--risk-2', '#f97316'), v('--risk-3', '#dc2626')],
+    heat: [v('--heat-1', 'rgba(250,204,21,0)'), v('--heat-2', '#fde047'), v('--heat-3', '#fb923c'), v('--heat-4', '#e11d48'), v('--heat-5', '#7f1d1d')],
+    choropleth: [v('--ch-0', '#fff1f2'), v('--ch-1', '#fecdd3'), v('--ch-2', '#fda4af'), v('--ch-3', '#fb7185'), v('--ch-4', '#e11d48'), v('--ch-5', '#9f1239')],
+    space: v('--map-space', '#0b1220'),
+  };
+}

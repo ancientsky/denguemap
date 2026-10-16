@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' https://tiles.openfreemap.org; worker-src 'self' blob:; child-src blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; manifest-src 'self'" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b111b" media="(prefers-color-scheme: dark)" />
+    <title>登革熱地圖｜臺灣登革熱病例、群聚與病媒蚊監測</title>
+    <meta name="description" content="臺灣登革熱動態地圖：本土與境外移入病例分布、聚集警示、病媒蚊風險村里、病例趨勢與境外移入來源國。資料來自衛生福利部疾病管制署，每 3 小時更新。" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Applies the saved/system theme before first paint (external file: CSP has no 'unsafe-inline' for scripts). -->
+    <script src="/theme-init.js"></script>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <div class="boot" role="status"><span class="spinner" aria-hidden="true"></span>登革熱地圖 Dengue Map</div>
+    </div>
+    <noscript><p class="noscript">本網站需要啟用 JavaScript。This site requires JavaScript.</p></noscript>
+  </body>
+</html>

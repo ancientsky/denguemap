@@ -15,7 +15,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "data": "node scripts/data/run.mjs",
-    "fixtures": "node scripts/fixtures/make-fixtures.mjs"
+    "fixtures": "node scripts/fixtures/make-fixtures.mjs",
+    "test:unit": "vitest run tests/unit",
+    "smoke": "node scripts/smoke.mjs",
+    "icons": "node scripts/icons/make-icons.mjs",
+    "check": "npm run typecheck && npm run test:unit && npm run build && npm run smoke"
   },
   "dependencies": {
     "echarts": "6.1.0",

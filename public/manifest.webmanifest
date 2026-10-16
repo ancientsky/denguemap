@@ -1,0 +1,17 @@
+{
+  "name": "登革熱地圖 Dengue Map",
+  "short_name": "登革熱地圖",
+  "description": "臺灣登革熱病例、群聚與病媒蚊監測地圖 — Taiwan dengue cases, clusters and mosquito surveillance.",
+  "lang": "zh-Hant-TW",
+  "start_url": "./#/map",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f9",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
