@@ -30,7 +30,7 @@ export default defineConfig({
   preview: { port: 4173, strictPort: true },
   server: { port: 5173 },
   test: {
-    include: ['tests/unit/**/*.test.ts'],
+    include: ['tests/unit/**/*.test.ts', 'tests/data/**/*.test.mjs'],
     environment: 'node',
   },
 });
