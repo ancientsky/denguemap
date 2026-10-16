@@ -194,4 +194,12 @@ describe('ns1', () => {
     expect(hospitals).toEqual([['長庚紀念醫院', '臺北市松山區敦化北路199號', '02-27135211', 121.54962, 25.05551, '1101010012', '63000']]);
     validateFileShape('ns1.json', JSON.stringify({ sourceDate: '2016-06-03', h: hospitals }));
   });
+  it('falls back to the address prefix when the CDC city code is unknown', () => {
+    const one = (props) => ({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { ...NS1_PROPS, ...props }, geometry: null }] });
+    const byName = (n) => ({ 臺東縣: '10014' })[n];
+    const r = normalizeNs1(one({ code: '99', hospAddress: '台東縣臺東市五權街1號' }), byName);
+    expect(r.hospitals[0][6]).toBe('10014');
+    expect(r.unmappedCodes).toEqual({ 99: 1 });
+    expect(normalizeNs1(one({ code: '99', hospAddress: '某地' }), byName).hospitals[0][6]).toBeNull();
+  });
 });

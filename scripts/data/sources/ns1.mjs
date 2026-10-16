@@ -4,7 +4,7 @@
  */
 import lz from 'lz-string';
 import { BBOX, CDC_TO_MOI, NS1_PATH } from '../config.mjs';
-import { cleanLabel, round5, toJson } from '../util.mjs';
+import { cleanLabel, normTai, round5, toJson } from '../util.mjs';
 
 const MAX_DECOMPRESSED = 20 * 1024 * 1024;
 
@@ -30,12 +30,16 @@ export function decodeNs1Body(body) {
 
 /**
  * @param {unknown} fc GeoJSON FeatureCollection
+ * @param {(zhCounty:string)=>string|undefined} [countyCodeByName] fallback when the CDC city code is unknown:
+ *   the county is read from the first 3 characters of the address
  * @returns {{hospitals:Array<[string,string,string,number,number,string,string|null]>, dropped:number}}
  */
-export function normalizeNs1(fc) {
+export function normalizeNs1(fc, countyCodeByName = () => undefined) {
   const c = /** @type {any} */ (fc);
   if (!c || c.type !== 'FeatureCollection' || !Array.isArray(c.features)) throw new Error('ns1: expected a FeatureCollection');
   const hospitals = [];
+  /** @type {Record<string, number>} */
+  const unmappedCodes = {};
   let dropped = 0;
   for (const f of c.features) {
     const p = f?.properties ?? {};
@@ -46,17 +50,23 @@ export function normalizeNs1(fc) {
     if (!name || !Number.isFinite(lng) || !Number.isFinite(lat)
       || lng < BBOX.minLng || lng > BBOX.maxLng || lat < BBOX.minLat || lat > BBOX.maxLat) { dropped++; continue; }
     const code = typeof p.code === 'string' ? p.code.trim() : String(p.code ?? '');
+    const address = cleanLabel(p.hospAddress, 120);
+    let county = /** @type {any} */ (CDC_TO_MOI)[code] ?? null;
+    if (county === null) {
+      unmappedCodes[code] = (unmappedCodes[code] ?? 0) + 1;
+      county = countyCodeByName(normTai(address.slice(0, 3))) ?? null;
+    }
     hospitals.push(/** @type {[string,string,string,number,number,string,string|null]} */ ([
       name,
-      cleanLabel(p.hospAddress, 120),
+      address,
       cleanLabel(p.hospTel, 40),
       round5(lng),
       round5(lat),
       cleanLabel(String(p.hospID ?? ''), 20),
-      /** @type {any} */ (CDC_TO_MOI)[code] ?? null,
+      county,
     ]));
   }
-  return { hospitals, dropped };
+  return { hospitals, dropped, unmappedCodes };
 }
 
 /**
@@ -65,12 +75,12 @@ export function normalizeNs1(fc) {
 export async function buildNs1Source(ctx) {
   const body = await ctx.http.getText(NS1_PATH);
   const fc = JSON.parse(decodeNs1Body(body));
-  const { hospitals, dropped } = normalizeNs1(fc);
+  const { hospitals, dropped, unmappedCodes } = normalizeNs1(fc, (n) => ctx.geo.countyByName.get(n)?.code);
   const sourceDate = (/ns1hosp_(\d{4})(\d{2})(\d{2})/.exec(NS1_PATH) ?? []).slice(1, 4).join('-');
   const data = { sourceDate, h: hospitals };
   const noCounty = hospitals.filter((h) => h[6] === null).length;
   return {
     files: { 'ns1.json': toJson(data) },
-    meta: { records: hospitals.length, sourceDate, dropped, noCounty },
+    meta: { records: hospitals.length, sourceDate, dropped, noCounty, unmappedCodes },
   };
 }
