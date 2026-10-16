@@ -8,7 +8,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - name: probe
         shell: bash
@@ -29,13 +29,19 @@ jobs:
             "https://data.gov.tw/api/v2/rest/dataset/21026"
             "https://data.gov.tw/api/v2/rest/dataset/24385"
             "https://data.gov.tw/api/v2/rest/dataset/24159"
+            "https://tiles.openfreemap.org/styles/positron"
+            "https://tiles.openfreemap.org/styles/dark"
+            "https://tiles.openfreemap.org/styles/liberty"
+            "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+            "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+            "https://cdcdengue.azurewebsites.net/"
           )
           mkdir -p out
           i=0
           for u in "${urls[@]}"; do
             i=$((i+1))
             echo "=================== $u"
-            curl -sS -L --max-time 120 -o "out/$i.bin" -D "out/$i.h" -H "Origin: https://ancientsky.github.io" -w "HTTP %{http_code} size=%{size_download} time=%{time_total} final=%{url_effective}\n" "$u"
+            curl -sS -L --connect-timeout 15 --max-time 90 -o "out/$i.bin" -D "out/$i.h" -H "Origin: https://ancientsky.github.io" -w "HTTP %{http_code} size=%{size_download} time=%{time_total} final=%{url_effective}\n" "$u"
             grep -iE "^(content-type|access-control|content-length|last-modified|etag|cache-control|content-encoding)" "out/$i.h"
             file "out/$i.bin"
             echo "--- head:"
@@ -76,7 +82,7 @@ jobs:
           print('\n'.join(sorted(s)[:25]))
           "); do
             echo "=================== $u"
-            curl -sS -L --max-time 120 -o r.bin -D r.h -H "Origin: https://ancientsky.github.io" -w "HTTP %{http_code} size=%{size_download}\n" "$u"
+            curl -sS -L --connect-timeout 15 --max-time 90 -o r.bin -D r.h -H "Origin: https://ancientsky.github.io" -w "HTTP %{http_code} size=%{size_download}\n" "$u"
             grep -iE "^(content-type|access-control|last-modified)" r.h
             head -c 1200 r.bin | iconv -f utf-8 -t utf-8 -c; echo
           done
