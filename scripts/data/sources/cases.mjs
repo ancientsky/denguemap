@@ -270,6 +270,7 @@ export async function buildCases(ctx) {
       drops,
       nullTown: out.nullTown,
       uniquePts: out.uniquePts,
+      townMatch: { ...geo.townStats },
     },
   };
 }
