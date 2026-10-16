@@ -1,0 +1,80 @@
+name: data
+
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      allow_shrink:
+        description: "Accept case counts lower than the committed data (use after an official correction)"
+        type: boolean
+        default: false
+  # TODO remove before merge: temporary trigger for testing the pipeline on this branch
+  push:
+    branches:
+      - claude/hopeful-cannon-ldz7fp
+    paths:
+      - "scripts/data/**"
+      - ".github/workflows/data.yml"
+
+permissions: {}
+
+concurrency:
+  group: data
+  cancel-in-progress: false
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npx vitest run tests/data
+
+      - name: Fetch and build data
+        env:
+          DATA_ALLOW_SHRINK: ${{ inputs.allow_shrink && '1' || '' }}
+        run: npm run data
+
+      - name: Commit data
+        id: commit
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain public/data)" ]; then
+            echo "No data changes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          git commit -m "data: update $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            if git pull --rebase origin "$REF_NAME" && git push origin "HEAD:refs/heads/$REF_NAME"; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "Committed data update to $REF_NAME." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "push attempt $attempt failed; retrying"
+            sleep $((attempt * 5))
+          done
+          echo "Could not push the data commit." >&2
+          exit 1
