@@ -62,6 +62,18 @@ export const REFERENCE_COUNTS = Object.freeze({
   imported: [30, 26, 21, 52, 48, 51, 77, 86, 90, 167, 198, 170, 266, 136, 183, 218, 218, 332, 318, 298, 350, 539, 64, 10, 68, 271, 198, 226, 185],
 });
 
+/**
+ * Fixed historical reference for imported.json (GetImportedData), 2023-01-01..2026-10-14.
+ * Never update this to newer (lower) numbers: it exists to tell the UI about upstream shortfalls.
+ */
+export const IMPORTED_REFERENCE = Object.freeze({
+  total: 894,
+  byYear: Object.freeze({ 2023: 271, 2024: 203, 2025: 229, 2026: 191 }),
+});
+
+/** A count below this fraction of its reference raises a manifest warning. */
+export const WARN_RATIO = 0.8;
+
 /** Max allowed relative shrink of a year's count vs previous / reference. */
 export const SHRINK_TOLERANCE = { rel: 0.02, abs: 5 };
 

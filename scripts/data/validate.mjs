@@ -3,7 +3,9 @@
  * Validation gates.  Every function throws an Error describing the problem;
  * a throw makes the whole source "stale" (previous files are kept).
  */
-import { BBOX, FIRST_YEAR, REFERENCE_COUNTS, SHRINK_TOLERANCE } from './config.mjs';
+import {
+  BBOX, FIRST_YEAR, IMPORTED_REFERENCE, REFERENCE_COUNTS, SHRINK_TOLERANCE, WARN_RATIO,
+} from './config.mjs';
 import { daysFromIso } from './util.mjs';
 
 /** @param {boolean} cond @param {string} msg */
@@ -174,4 +176,39 @@ export function validateFileShape(path, text) {
   } else {
     err('unknown file');
   }
+}
+
+/**
+ * Data-quality warnings for the manifest: counts of the currently committed
+ * data that fall below WARN_RATIO of the fixed historical reference.
+ * Deterministic (no timestamps); sorted by code, year, type.
+ * @param {object} p
+ * @param {Record<number, {local:number, imported:number}>} p.casesTotals per-year totals of cases/{year}.json that exist
+ * @param {{total:number, byYear:Record<number, number>}|null} p.imported totals of imported.json (null when absent)
+ * @param {{local:readonly number[], imported:readonly number[]}} [p.reference]
+ * @param {{total:number, byYear:Readonly<Record<number, number>>}} [p.importedReference]
+ * @returns {Array<{code:string, year?:number, type?:string, got:number, expected:number}>}
+ */
+export function computeWarnings({ casesTotals, imported, reference = REFERENCE_COUNTS, importedReference = IMPORTED_REFERENCE }) {
+  /** @type {Array<{code:string, year?:number, type?:string, got:number, expected:number}>} */
+  const out = [];
+  const low = (/** @type {number} */ got, /** @type {number} */ expected) => expected > 0 && got < expected * WARN_RATIO;
+  for (let i = 0; i < reference.local.length; i++) {
+    const year = FIRST_YEAR + i;
+    const t = casesTotals[year];
+    if (!t) continue;
+    for (const type of /** @type {const} */ (['local', 'imported'])) {
+      const expected = reference[type][i];
+      if (low(t[type], expected)) out.push({ code: 'cases-shortfall', year, type, got: t[type], expected });
+    }
+  }
+  if (imported) {
+    if (low(imported.total, importedReference.total)) out.push({ code: 'imported-shortfall', got: imported.total, expected: importedReference.total });
+    for (const [ys, expected] of Object.entries(importedReference.byYear)) {
+      const got = imported.byYear[Number(ys)] ?? 0;
+      if (low(got, expected)) out.push({ code: 'imported-shortfall', year: Number(ys), got, expected });
+    }
+  }
+  const key = (/** @type {any} */ w) => `${w.code}|${String(w.year ?? 0).padStart(5, '0')}|${w.type ?? ''}`;
+  return out.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
 }

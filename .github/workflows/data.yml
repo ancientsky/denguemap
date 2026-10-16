@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  data:
+  update:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -87,3 +87,14 @@ jobs:
           done
           echo "Could not push the data commit." >&2
           exit 1
+
+  deploy:
+    needs: update
+    if: needs.update.outputs.changed == 'true' && github.ref_name == 'main'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      ref: ${{ github.ref_name }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

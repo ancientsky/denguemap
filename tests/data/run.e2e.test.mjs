@@ -48,6 +48,11 @@ describe('pipeline end to end (mock backend)', () => {
     expect(m.sources.ns1.records).toBe(1100);
     expect(Object.keys(m.files)).toHaveLength(files.length - 1);
     expect(m.latestOnset).toBe((await read('summary.json')).latestOnset);
+    // the mock data is far below the historical reference -> warnings, in deterministic order
+    expect(m.warnings.length).toBeGreaterThan(10);
+    expect(m.warnings).toContainEqual({ code: 'cases-shortfall', year: 2015, type: 'local', got: expect.any(Number), expected: 43181 });
+    expect(m.warnings).toContainEqual({ code: 'imported-shortfall', got: 5, expected: 894 });
+    expect(Object.keys(m)).toEqual(['schema', 'generatedAt', 'latestOnset', 'years', 'sources', 'warnings', 'files']);
 
     const c = await read('cases/2026.json');
     expect(c.pts.every((p) => p.length === 3 && p[2] !== undefined)).toBe(true);

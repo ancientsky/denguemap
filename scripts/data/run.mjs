@@ -24,7 +24,7 @@ import { buildNoticesSource, recentCountriesFromImportedJson } from './sources/n
 import { buildVectorSource } from './sources/vector.mjs';
 import { toJson, isoUtc, twDate, parseYmd } from './util.mjs';
 import {
-  validateCases, validateFileShape, validateImported, validateNs1, validateVector,
+  computeWarnings, validateCases, validateFileShape, validateImported, validateNs1, validateVector,
 } from './validate.mjs';
 import {
   buildManifest, hashFiles, manifestChanged, manifestToJson, readJson, writeIfChanged,
@@ -200,8 +200,29 @@ export async function run(options = {}) {
     } else srcInfo[n] = { ok: false };
   }
   const latestOnset = results.cases?.ok ? results.cases.meta.latestOnset : prevManifest?.latestOnset ?? '';
+  // warnings describe the data as committed (so they also hold while a source is stale)
+  /** @type {Record<number, {local:number, imported:number}>} */
+  const casesTotals = {};
+  for (const y of years) {
+    const f = await readJson(outDir, `cases/${y}.json`);
+    if (f) casesTotals[Number(y)] = yearTotals(f);
+  }
+  const impFile = await readJson(outDir, 'imported.json');
+  /** @type {{total:number, byYear:Record<number, number>}|null} */
+  let impTotals = null;
+  if (impFile?.countries) {
+    impTotals = { total: 0, byYear: {} };
+    for (const c of Object.values(impFile.countries)) {
+      for (const [y, n] of Object.entries(/** @type {any} */ (c).byYear ?? {})) {
+        impTotals.byYear[Number(y)] = (impTotals.byYear[Number(y)] ?? 0) + Number(n);
+        impTotals.total += Number(n);
+      }
+    }
+  }
+  const warnings = computeWarnings({ casesTotals, imported: impTotals });
+  for (const w of warnings) log(`warning: ${JSON.stringify(w)}`);
   const manifest = buildManifest({
-    now, prev: prevManifest, sources: srcInfo, latestOnset, years: /** @type {string[]} */ (years), files,
+    now, prev: prevManifest, sources: srcInfo, latestOnset, years: /** @type {string[]} */ (years), files, warnings,
   });
   if (manifestChanged(prevManifest, manifest)) {
     await writeIfChanged(outDir, 'manifest.json', manifestToJson(manifest));
@@ -261,6 +282,9 @@ async function writeSummary(path, results, manifest, changed, prevManifest, toda
   const others = changed.filter((c) => !c.startsWith('cases/'));
   const shown = [...others.map((c) => `\`${c}\``), ...(cases.length ? [`cases/*.json (${cases.length})`] : [])];
   lines.push('', `Changed files: ${shown.length ? shown.join(', ') : 'none'}`);
+  if (manifest?.warnings?.length) {
+    lines.push('', `Data-quality warnings (${manifest.warnings.length}):`, ...manifest.warnings.map((/** @type {any} */ w) => `- \`${JSON.stringify(w)}\``));
+  }
   if (manifest) lines.push('', `latest onset: ${manifest.latestOnset}, years: ${manifest.years[0]}..${manifest.years.at(-1)}`);
   lines.push('');
   await appendFile(path, lines.join('\n'));

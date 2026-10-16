@@ -21,10 +21,27 @@ JSON 一律 UTF-8、無縮排（minified）。
                   "periodStart": "2026-09-06", "periodEnd": "2026-10-10" },
     "ns1":      { "ok": true, "stale": false, "fetchedAt": "…", "records": 2316, "sourceDate": "2016-06-03" }
   },
+  "warnings": [                                   // 資料品質警示（見下）；沒有問題時為 []
+    { "code": "cases-shortfall", "year": 2023, "type": "local", "got": 951, "expected": 24794 },
+    { "code": "imported-shortfall", "got": 294, "expected": 894 },
+    { "code": "imported-shortfall", "year": 2023, "got": 53, "expected": 271 }
+  ],
   "files": { "summary.json": "a1b2c3d4", "cases/2026.json": "…" }   // 內容 sha256 前 8 碼，前端用作 ?v= 快取鍵
 }
 ```
-`stale: true` 代表這次抓取失敗、沿用上一版；`fetchedAt` 是該份資料實際成功抓取的時間。
+**來源狀態（`sources.*`）**
+
+| `ok` | `stale` | 意義 |
+|---|---|---|
+| `true` | `false` | 這次抓取並驗證成功 |
+| `false` | `true` | 這次抓取／驗證失敗，沿用上一版檔案（`fetchedAt`、`records` 等維持上一版的值） |
+| `false` | `false` | 從未成功抓取過（沒有任何檔案；`fetchedAt: null`、`records: 0`） |
+
+`fetchedAt` 是該份資料實際成功抓取的時間。manifest 只在「任何資料檔雜湊、`warnings` 或來源 `ok`／`stale` 旗標改變」時重寫，因此資料沒變時 `generatedAt`／`fetchedAt` 不會前進（排程每 3 小時檢查一次，但不會每次都 commit）。
+
+**`warnings`**（決定性、不含時間戳記；依 `code`、`year`、`type` 排序）：以目前已提交的資料對照固定的歷史基準（2026-10-16 觀測值，不隨新資料更新），任何計數低於基準的 80% 就產生一筆，讓前端能誠實標示上游資料短缺。
+- `cases-shortfall`：`{ code, year, type: "local"|"imported", got, expected }`，逐年（1998 起）、逐類型比對 `cases/{year}.json` 的病例總數。
+- `imported-shortfall`：`{ code, got, expected }`（無 `year`）為 `imported.json` 全部筆數對基準 894（2023-01-01..2026-10-14）；`{ code, year, got, expected }` 為逐年比對（基準 2023: 271、2024: 203、2025: 229、2026: 191）。
 
 ## geo/admin.topo.json
 

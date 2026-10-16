@@ -88,8 +88,9 @@ export async function hashFiles(dir) {
  * @param {string} p.latestOnset
  * @param {string[]} p.years
  * @param {Record<string,string>} p.files
+ * @param {object[]} [p.warnings] data-quality warnings (see validate.computeWarnings)
  */
-export function buildManifest({ now, prev, sources, latestOnset, years, files }) {
+export function buildManifest({ now, prev, sources, latestOnset, years, files, warnings = [] }) {
   const nowIso = now.toISOString().replace(/\.\d{3}Z$/, 'Z');
   /** @type {Record<string, SourceEntry>} */
   const out = {};
@@ -111,17 +112,19 @@ export function buildManifest({ now, prev, sources, latestOnset, years, files })
     latestOnset,
     years: years.map(Number),
     sources: out,
+    warnings,
     files,
   };
 }
 
 /**
- * Rewrite the manifest only when a data file hash or a source ok/stale flag changed.
+ * Rewrite the manifest only when a data file hash, the warnings or a source ok/stale flag changed.
  * @param {any|null} prev @param {any} next
  */
 export function manifestChanged(prev, next) {
   if (!prev || prev.schema !== next.schema) return true;
   if (JSON.stringify(prev.files) !== JSON.stringify(next.files)) return true;
+  if (JSON.stringify(prev.warnings ?? []) !== JSON.stringify(next.warnings ?? [])) return true;
   for (const name of SOURCE_NAMES) {
     const a = prev.sources?.[name], b = next.sources[name];
     if (!a || a.ok !== b.ok || a.stale !== b.stale) return true;

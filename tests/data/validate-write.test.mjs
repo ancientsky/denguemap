@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  allowedShrink, checkShrink, validateCases, validateFileShape, validateImported, validateNs1, validateVector,
+  allowedShrink, checkShrink, computeWarnings, validateCases, validateFileShape, validateImported, validateNs1, validateVector,
 } from '../../scripts/data/validate.mjs';
 import { buildManifest, hashFiles, manifestChanged, writeIfChanged } from '../../scripts/data/write.mjs';
-import { REFERENCE_COUNTS } from '../../scripts/data/config.mjs';
+import { IMPORTED_REFERENCE, REFERENCE_COUNTS } from '../../scripts/data/config.mjs';
 
 describe('shrink guard', () => {
   const totals = { 2015: { local: 43181, imported: 332 }, 2026: { local: 14, imported: 185 } };
@@ -124,5 +124,50 @@ describe('manifest + writes', () => {
       expect(h['cases/2026.json']).toMatch(/^[0-9a-f]{8}$/);
       expect(await readFile(join(dir, 'cases/2026.json'), 'utf8')).toBe('{"a":2}');
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('computeWarnings', () => {
+  const full = {};
+  for (let i = 0; i < 29; i++) full[1998 + i] = { local: REFERENCE_COUNTS.local[i], imported: REFERENCE_COUNTS.imported[i] };
+  const impOk = { total: 894, byYear: { 2023: 271, 2024: 203, 2025: 229, 2026: 191 } };
+
+  it('is empty when counts meet the reference', () => {
+    expect(computeWarnings({ casesTotals: full, imported: impOk })).toEqual([]);
+  });
+  it('flags years below 80% of the fixed reference, for local and imported', () => {
+    const cur = { ...full, 2023: { local: 951, imported: 53 }, 2024: { local: 2, imported: 198 }, 2022: { local: 20 * 0.8, imported: 68 } };
+    const w = computeWarnings({ casesTotals: cur, imported: { total: 294, byYear: { 2023: 53, 2024: 2, 2025: 47, 2026: 185 } } });
+    expect(w).toEqual([
+      { code: 'cases-shortfall', year: 2023, type: 'imported', got: 53, expected: 271 },
+      { code: 'cases-shortfall', year: 2023, type: 'local', got: 951, expected: 24794 },
+      { code: 'cases-shortfall', year: 2024, type: 'local', got: 2, expected: 232 },
+      { code: 'imported-shortfall', got: 294, expected: 894 },
+      { code: 'imported-shortfall', year: 2023, got: 53, expected: 271 },
+      { code: 'imported-shortfall', year: 2024, got: 2, expected: 203 },
+      { code: 'imported-shortfall', year: 2025, got: 47, expected: 229 },
+    ]);
+  });
+  it('exactly 80% is fine, zero references never warn, missing files are skipped', () => {
+    expect(computeWarnings({ casesTotals: { 2015: { local: 43181 * 0.8, imported: 332 * 0.8 }, 2021: { local: 0, imported: 10 } }, imported: null })).toEqual([]);
+    expect(computeWarnings({ casesTotals: {}, imported: null })).toEqual([]);
+    expect(IMPORTED_REFERENCE.total).toBe(894);
+  });
+  it('is deterministic', () => {
+    const a = computeWarnings({ casesTotals: { 2023: { local: 1, imported: 1 } }, imported: { total: 1, byYear: {} } });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(computeWarnings({ casesTotals: { 2023: { local: 1, imported: 1 } }, imported: { total: 1, byYear: {} } })));
+  });
+  it('a change in warnings is a manifest change; timestamps alone are not', () => {
+    const src = { cases: { ok: true, records: 1 }, imported: { ok: true, records: 1 }, notices: { ok: true, records: 1 }, clusters: { ok: true, records: 0 }, vector: { ok: true, records: 1 }, ns1: { ok: true, records: 1 } };
+    const w1 = [{ code: 'imported-shortfall', got: 1, expected: 894 }];
+    const mk = (now, warnings) => buildManifest({ now: new Date(now), prev: null, sources: src, latestOnset: '', years: [], files: {}, warnings });
+    const a = mk('2026-10-16T12:00:00Z', w1);
+    expect(a.warnings).toEqual(w1);
+    expect(manifestChanged(a, mk('2026-10-16T15:00:00Z', w1))).toBe(false);
+    expect(manifestChanged(a, mk('2026-10-16T15:00:00Z', []))).toBe(true);
+    expect(manifestChanged(mk('2026-10-16T12:00:00Z', []), mk('2026-10-16T15:00:00Z', w1))).toBe(true);
+    const legacy = { ...mk('2026-10-16T12:00:00Z', []) };
+    delete legacy.warnings;
+    expect(manifestChanged(legacy, mk('2026-10-16T15:00:00Z', []))).toBe(false);
   });
 });
