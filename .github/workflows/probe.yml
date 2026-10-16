@@ -31,6 +31,13 @@ jobs:
           grep -hoiE '["'"'"'][^"'"'"' ]*\.(asmx|ashx|json|csv|geojson|aspx|svc)[^"'"'"' ]*["'"'"']|url *: *["'"'"'][^"'"'"']+["'"'"']' asset_* page_*.html | sort | uniq -c | sort -rn > endpoints.txt
           echo "### endpoints"; cat endpoints.txt
           echo "### external hosts"; grep -hoE 'https?://[a-zA-Z0-9.-]+' page_*.html asset_* | sort | uniq -c | sort -rn | head -40
+          echo "### refs"; cat refs.txt
+          echo "### sizes"; ls -la
+          for f in asset_*; do
+            case "$f" in *jquery*|*semantic*|*Semantic*|*font-awesome*|*leaflet*|*highcharts*|*Highcharts*|*echarts*|*bootstrap*|*.css*) continue;; esac
+            echo "######## FILE $f"; head -c 20000 "$f" | iconv -f utf-8 -t utf-8 -c; echo
+          done
+          for f in page_*.html; do echo "######## PAGE $f"; sed -e 's/<[^>]*>/ /g' "$f" | tr -s ' \t\r' | grep -v '^ *$' | head -c 4000; echo; grep -oiE '<script[^>]*src="[^"]*"' "$f"; done
           echo "### od.cdc http"; curl -sS --connect-timeout 10 -o /dev/null -w "%{http_code}\n" http://od.cdc.gov.tw/eic/Dengue_Daily.csv
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
