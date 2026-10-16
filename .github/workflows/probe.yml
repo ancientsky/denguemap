@@ -8,55 +8,164 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: round2 code dump
+      - name: round3 trend code and endpoint calls
         shell: bash
         run: |
           set +e
           mkdir -p site && cd site
           B=https://cdcdengue.azurewebsites.net
-          for p in "" Timemap.aspx Index.aspx DengueCluster.aspx VectorMap.aspx Imported.aspx ma.aspx; do
-            f="page_${p:-root}.html"
-            curl -sS -L --connect-timeout 15 --max-time 60 -o "$f" -w "$p -> %{http_code} %{size_download} %{url_effective}\n" "$B/$p"
+          for r in resource/__customized/1.0/index.js resource/__customized/1.0/epicurve.js resource/__workers/1.0/clusterLastestCode1.js resource/__workers/1.0/city_full.js resource/__workers/1.0/village_point_full.js resource/__workers/1.0/village_full.js resource/__workers/1.0/cityTown_full.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/timemap.js resource/__customized/1.0/InsectCluster.js resource/Semantic-UI/2.0.3/pathmap.js; do
+            curl -sS -L --connect-timeout 15 --max-time 60 -o "js_$(basename $r)" -w "$r -> %{http_code} %{size_download}\n" "$B/$r"
           done
-          echo "##### per-page scripts (custom only) and inline scripts"
+          echo "##### all asmx op names / other data urls in all js"
+          grep -ohE 'asmx/[A-Za-z_]+|epimap[^"'"'"' ]*|operation[^,}]{0,60}' js_*.js | sort | uniq -c
+          echo "##### Index.aspx html select/inputs"
+          curl -sS -L --max-time 60 "$B/Index.aspx" -o idx.html
           python3 - <<'PY'
-          import re,glob
-          for f in sorted(glob.glob('page_*.html')):
-              t=open(f,encoding='utf-8',errors='replace').read()
-              print('==',f,len(t))
-              print(' SRC:',[s for s in re.findall(r'<script[^>]*src="([^"]*)"',t) if '__customized' in s or 'pathmap' in s or 'highcharts' in s or 'datatables' in s])
-              print(' LINKS css:',re.findall(r'<link[^>]*href="([^"]*)"',t))
-              for m in re.finditer(r'<script(?![^>]*src)[^>]*>(.*?)</script>',t,re.S):
-                  b=m.group(1)
-                  if 'google-analytics' in b: continue
-                  print(' INLINE SCRIPT:',b.strip()[:2500])
+          import re
+          t=open('idx.html',encoding='utf-8',errors='replace').read()
+          for m in re.finditer(r'<select[^>]*>.*?</select>',t,re.S):
+              s=m.group(0); print(re.search(r'<select[^>]*>',s).group(0)); print(re.findall(r'<option[^>]*value="([^"]*)"[^>]*>\s*([^<]*)',s))
+          print(re.findall(r'<(?:input|div|span|table)[^>]*id="([^"]*)"',t))
           PY
-          for r in resource/__workers/1.0/dwork_ajax.js resource/__workers/1.0/shared_GETGEO.js resource/__workers/1.0/village309.js resource/__workers/1.0/ns1hosp_worker.js resource/__customized/1.0/main.js resource/__customized/1.0/masterpage.js resource/__customized/1.0/InsectTable.js resource/__customized/1.0/InsectTour.js resource/Semantic-UI/2.0.3/pathmap.js resource/__customized/1.0/DengueCluster.js resource/__customized/1.0/InsectCluster.js resource/__customized/1.0/Insectarea.js resource/__customized/1.0/loadmalayer.js resource/__customized/1.0/ns1hosp.js resource/__customized/1.0/general.js resource/__customized/1.0/timemap.js resource/__customized/1.0/area.js; do
-            out="js_$(basename $r)"
-            curl -sS -L --connect-timeout 15 --max-time 60 -o "$out" -w "$r -> %{http_code} %{size_download}\n" "$B/$r"
-          done
-          pr() { echo "######## $1 lines $2-$3"; sed -n "$2,$3p" "js_$1" | cut -c1-240; }
-          for f in dwork_ajax.js shared_GETGEO.js village309.js ns1hosp_worker.js masterpage.js InsectTable.js InsectTour.js; do echo "######## FULL $f"; cat js_$f | cut -c1-240; done
-          echo "######## FULL main.js"; cat js_main.js | iconv -c -f utf-8 -t utf-8 | cut -c1-240
-          pr pathmap.js 1 80
-          pr pathmap.js 270 330
-          pr DengueCluster.js 1 120
-          pr DengueCluster.js 235 365
-          pr InsectCluster.js 596 640
-          pr InsectCluster.js 840 870
-          pr Insectarea.js 590 700
-          pr loadmalayer.js 125 165
-          pr loadmalayer.js 285 320
-          pr ns1hosp.js 140 185
-          pr timemap.js 60 100
-          pr timemap.js 335 375
-          pr general.js 60 95
-          echo "##### misc static probes"
-          for u in data/geojson/cdcdengueVillagePoint.json data/InsectTable/TableColumns.json data/geojson/village_full_comp.json data/dengue_layer/vill309_comp.json data/ns1/ns1hosp_20160603_lzstring.json data/geojson/city.json; do
-            curl -sS -L --connect-timeout 15 --max-time 90 -o /tmp/x -D /tmp/h -w "$u -> %{http_code} %{size_download}\n" "$B/$u"; grep -iE '^(content-type|access-control|last-modified)' /tmp/h; head -c 300 /tmp/x; echo
-          done
-          for u in https://zone.cdc.gov.tw/map/csv/cdcdengueData_test.csv https://zone.cdc.gov.tw/map/geojson/cdcdengueVillage.json https://epimap.cdc.gov.tw/cdcdengue; do
-            curl -sS -L --connect-timeout 15 --max-time 90 -H "Origin: https://ancientsky.github.io" -o /tmp/x -D /tmp/h -w "$u -> %{http_code} %{size_download}\n" "$u"; grep -iE '^(HTTP|content-type|access-control|last-modified)' /tmp/h; head -c 600 /tmp/x; echo
-          done
+          echo "######## FULL index.js"; cat js_index.js | cut -c1-220
+          echo "######## epicurve.js data-call context"
+          grep -nE 'ajax|asmx|getJSON|url|\.d\b|parseJSON|postMessage|Worker' js_epicurve.js | cut -c1-220 | head -60
+          echo "######## clusterLastestCode1.js"; cat js_clusterLastestCode1.js | cut -c1-220
+          echo "######## village_point_full.js"; cat js_village_point_full.js | cut -c1-220
+          echo "######## DengueCluster.js field usage"; grep -nE 'properties\.|\.d\b|parseJSON|features' js_DengueCluster.js | cut -c1-200 | head -60
+          echo "######## timemap.js field usage"; grep -nE 'properties\.|\.d\b|parseJSON|features|\.sickdate|\.sick|\.casetype|\.type' js_timemap.js | cut -c1-200 | head -60
+          echo "######## pathmap.js field usage"; grep -nE 'results\[|\.country|\.sickdate|\.count|metadata|data\[k\]' js_pathmap.js | cut -c1-200 | head -40
+          echo "######## loadmalayer villagestr"; grep -nE 'villagestr|markerdate|results\[|\.sickdate|\.d\b' js_loadmalayer.js | cut -c1-220 | head -50
+          echo "######## InsectCluster properties usage"; grep -nE 'properties|weeks|\.dS|\.dE|ovi|BI|dS|cases' js_InsectCluster.js | cut -c1-200 | head -60
+          cat > probe.py <<'PY'
+          import json,time,sys,urllib.request,urllib.error,datetime,collections
+          B='https://cdcdengue.azurewebsites.net/'
+          ORIGIN='https://ancientsky.github.io'
+          def call(path,body=None,method=None,ctype='application/json; charset=utf-8',timeout=120,raw=False):
+              data=None
+              if body is not None: data=body.encode() if isinstance(body,str) else json.dumps(body).encode()
+              hdr={'Origin':ORIGIN,'User-Agent':'Mozilla/5.0'}
+              if data is not None or method=='POST': hdr['Content-Type']=ctype
+              req=urllib.request.Request(path if path.startswith('http') else B+path,data=data,headers=hdr,method=method or ('POST' if data is not None else 'GET'))
+              t=time.time()
+              try:
+                  r=urllib.request.urlopen(req,timeout=timeout); code=r.status; h=r.headers; b=r.read()
+              except urllib.error.HTTPError as e:
+                  code=e.code; h=e.headers; b=e.read()
+              except Exception as e:
+                  print('  EXC',repr(e)); return None,None,b''
+              dt=time.time()-t
+              keep={k:v for k,v in h.items() if k.lower() in ('content-type','content-length','access-control-allow-origin','access-control-allow-methods','access-control-allow-headers','access-control-allow-credentials','cache-control','last-modified','server','x-powered-by','content-encoding','vary','etag')}
+              print('  status',code,'bytes',len(b),'secs %.1f'%dt,keep)
+              return code,h,b
+          def stats(recs):
+              if not recs or not isinstance(recs[0],dict): return
+              keys=list(recs[0].keys()); print('  KEYS:',keys)
+              for k in keys:
+                  vals=[r.get(k) for r in recs if isinstance(r,dict)]
+                  try: u=collections.Counter(vals)
+                  except TypeError: continue
+                  if len(u)<=40: print('   ',k,'->',dict(u.most_common(40)))
+                  else:
+                      sv=[v for v in vals if isinstance(v,(str,int,float))]
+                      try: print('   ',k,'-> %d unique, min=%r max=%r'%(len(u),min(sv),max(sv)))
+                      except Exception: print('   ',k,'-> %d unique'%len(u))
+          def show(b,label='',nrec=3):
+              s=b.decode('utf-8','replace')
+              print('  RAW[:1500]:',s[:1500].replace('\n','\\n'))
+              try: j=json.loads(s)
+              except Exception as e: print('  not json',e); return None
+              inner=j
+              if isinstance(j,dict) and 'd' in j:
+                  d=j['d']
+                  print('  outer keys',list(j.keys()),'d type',type(d).__name__)
+                  if isinstance(d,str):
+                      try: inner=json.loads(d)
+                      except Exception as e: print('  inner not json',e,d[:300]); return d
+                  else: inner=d
+              if isinstance(inner,dict) and 'features' in inner:
+                  f=inner['features']; print('  GEOJSON features:',len(f),'top keys',[k for k in inner if k!='features'],{k:inner[k] for k in inner if k not in('features','crs')})
+                  recs=[x.get('properties',{}) for x in f]
+                  print('  geom types',collections.Counter(x.get('geometry',{}).get('type') for x in f if x.get('geometry')))
+                  for x in f[:nrec]:
+                      g=json.dumps(x.get('geometry'))[:200]
+                      print('  FEATURE props',json.dumps(x.get('properties'),ensure_ascii=False)[:900],'geom',g)
+                  stats(recs)
+              elif isinstance(inner,list):
+                  print('  LIST len',len(inner))
+                  for x in inner[:nrec]: print('  REC',json.dumps(x,ensure_ascii=False)[:700])
+                  stats(inner)
+              elif isinstance(inner,dict):
+                  print('  DICT keys',list(inner.keys())[:30])
+                  print('  ',json.dumps(inner,ensure_ascii=False)[:1500])
+              return inner
+          PY
+          cat > run3.py <<'PY'
+          import sys; sys.path.insert(0,'.')
+          from probe import *
+          today=datetime.date.today(); fmt=lambda d:d.strftime('%Y/%m/%d')
+          d30=today-datetime.timedelta(days=30)
+          print('TODAY',today)
+          def P(title): print('\n=== '+title)
+          # CORS preflight on the asmx
+          P('OPTIONS preflight GetDengueLocation')
+          req=urllib.request.Request(B+'DengueData.asmx/GetDengueLocation',method='OPTIONS',headers={'Origin':ORIGIN,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'})
+          try:
+              r=urllib.request.urlopen(req,timeout=30); print(' ',r.status,dict(r.headers))
+          except urllib.error.HTTPError as e: print('  HTTPError',e.code,dict(e.headers))
+          except Exception as e: print('  EXC',e)
+          # Case points
+          for (cc,imm,s,e,label) in [
+              ('07','0',fmt(d30),fmt(today),'Kaohsiung local last30'),
+              ('all','0',fmt(d30),fmt(today),'all local last30'),
+              ('all','1',fmt(d30),fmt(today),'all imported last30'),
+              ('all','2',fmt(d30),fmt(today),'all both last30'),
+              ('all','0','2026/01/01',fmt(today),'all local 2026 YTD'),
+              ('all','1','2026/01/01',fmt(today),'all imported 2026 YTD'),
+              ('all','2','2026/01/01',fmt(today),'all both 2026 YTD'),
+              ('all','2','2025/01/01','2025/12/31','all both 2025 full'),
+              ('all','0','2015/01/01',fmt(today),'all local since 2015 (big)'),
+          ]:
+              P('GetDengueLocation '+label)
+              body="{citycode:'%s', immigration: '%s', startDate: '%s', endDate: '%s' }"%(cc,imm,s,e)
+              print('  body',body)
+              c,h,b=call('DengueData.asmx/GetDengueLocation',body)
+              if b: show(b)
+          P('GetDengueLocation strict-JSON body variant (shared_GETGEO adds operation key)')
+          c,h,b=call('DengueData.asmx/GetDengueLocation',{"operation":"GetDengueLocation","citycode":"07","immigration":"2","startDate":fmt(d30),"endDate":fmt(today)})
+          if b: print('  ',b[:300])
+          P('GET variant of GetDengueLocation (no body)')
+          c,h,b=call('DengueData.asmx/GetDengueLocation?citycode=07&immigration=2&startDate=2026/09/01&endDate=2026/10/16',method='GET')
+          print('  ',b[:300])
+          # Cluster
+          P('GetDengueClusterEnable empty body')
+          c,h,b=call('DengueData.asmx/GetDengueClusterEnable','')
+          if b: show(b)
+          P('GetDengueClusterEnable {} body')
+          c,h,b=call('DengueData.asmx/GetDengueClusterEnable','{}')
+          if b: show(b)
+          for cc in ['31','01','07','05','43','03','32','all']:
+              P('GetDengueCluster_New '+cc)
+              c,h,b=call('DengueData.asmx/GetDengueCluster_New',"{citycode:'%s'}"%cc)
+              if b: show(b,nrec=2)
+          # Imported
+          P('GetImportedData empty')
+          c,h,b=call('DengueData.asmx/GetImportedData','')
+          imp=show(b) if b else None
+          P('GetImportedData {}')
+          c,h,b=call('DengueData.asmx/GetImportedData','{}')
+          print('  ',b[:200])
+          if isinstance(imp,list) and imp:
+              ct=collections.Counter((x.get('country_code'),x.get('country_name')) for x in imp)
+              print('  top countries',ct.most_common(10))
+              yrs=collections.Counter(x.get('sickdate','')[:4] for x in imp); print('  by year',sorted(yrs.items()))
+              cc0,cn0=ct.most_common(1)[0][0]
+              P('GetIntEicdemic %s %s'%(cc0,cn0))
+              c,h,b=call('DengueData.asmx/GetIntEicdemic',"{countrycode:'%s', countryname:'%s'}"%(cc0,cn0))
+              if b: show(b)
+          open('done3','w').write('1')
+          PY
+          python3 run3.py 2>&1 | cut -c1-2500
