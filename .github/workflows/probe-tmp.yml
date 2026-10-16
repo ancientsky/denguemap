@@ -1,5 +1,6 @@
 name: probe-tmp
 on:
+  workflow_dispatch:
   push:
     branches: [claude/hopeful-cannon-ldz7fp]
     paths: [".github/workflows/probe-tmp.yml"]
@@ -12,35 +13,20 @@ jobs:
       - name: Probe
         run: |
           cat > probe.mjs <<'JS'
-          const B = 'https://cdcdengue.azurewebsites.net/DengueData.asmx/GetDengueLocation';
-          async function q(imm, s, e, city = 'all') {
-            const r = await fetch(B, { method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify({ citycode: city, immigration: imm, startDate: s, endDate: e }) });
+          const BASE = 'https://cdcdengue.azurewebsites.net/';
+          async function post(m, body) {
+            const r = await fetch(BASE + 'DengueData.asmx/' + m, { method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) });
             const t = await r.text();
-            let d; try { d = JSON.parse(JSON.parse(t).d); } catch { return { err: r.status + ' ' + t.slice(0, 100) }; }
-            return d || [];
+            return { status: r.status, headers: Object.fromEntries([...r.headers].filter(([k]) => /server|date|arr|x-|etag|last-mod|content-length|set-cookie/i.test(k))), d: (() => { try { return JSON.parse(JSON.parse(t).d) || []; } catch { return null; } })() };
           }
-          const sum = (a) => a.reduce((x, r) => x + Number(r.count || 1), 0);
           const byYear = (a) => { const m = {}; for (const r of a) { const y = r.sickdate.slice(0, 4); m[y] = (m[y] || 0) + 1; } return m; };
-          const byMonth = (a) => { const m = {}; for (const r of a) { const y = r.sickdate.slice(0, 7); m[y] = (m[y] || 0) + 1; } return m; };
-          const out = (k, v) => console.log(k, JSON.stringify(v));
-          const full = await q('0', '1998/01/01', '2026/10/16');
-          out('full local n', full.length); out('full byYear', byYear(full));
-          for (const y of [2022, 2023, 2024, 2025]) {
-            const a = await q('0', `${y}/01/01`, `${y}/12/31`);
-            out(`year ${y} n`, a.length ? a.length : a); out(`year ${y} byMonth`, byMonth(a));
+          for (let i = 0; i < 6; i++) {
+            const a = await post('GetDengueLocation', { citycode: 'all', immigration: '0', startDate: '2022/01/01', endDate: '2026/10/16' });
+            const b = await post('GetImportedData', {});
+            console.log(new Date().toISOString(), 'loc', JSON.stringify(byYear(a.d || [])), 'importedN', b.d && b.d.length, JSON.stringify(a.headers));
+            await new Promise((r) => setTimeout(r, 20000));
           }
-          const a = await q('0', '2023/01/01', '2026/10/16'); out('2023..today n', a.length); out('2023..today byYear', byYear(a));
-          const b = await q('0', '2022/01/01', '2023/12/31'); out('2022..2023 n', b.length); out('2022..2023 byYear', byYear(b));
-          const c = await q('0', '2023/01/01', '2023/06/30'); out('2023H1 n', c.length);
-          const d = await q('0', '2023/07/01', '2023/12/31'); out('2023H2 n', d.length);
-          const e = await q('0', '2023/09/01', '2023/09/30'); out('2023-09 n', e.length);
-          const f = await q('0', '2023/1/1', '2023/12/31'); out('2023 unpadded n', f.length ? f.length : f);
-          const g = await q('0', '2023/01/01', '2024/01/01'); out('2023..2024/01/01 n', g.length);
-          // sample of full for 2023: distribution and a record
-          const f23 = full.filter((r) => r.sickdate.startsWith('2023')); out('full 2023 byMonth', byMonth(f23)); out('full 2023 sample', f23.slice(0, 2));
-          const w = await q('0', '2023/08/01', '2023/12/31'); out('2023-08..12 n', w.length);
-          const imp = await q('1', '2023/01/01', '2023/12/31'); out('imp 2023 n', imp.length);
-          const fi = await q('1', '1998/01/01', '2026/10/16'); out('full imp byYear', byYear(fi));
-          const both = await q('2', '2023/01/01', '2023/12/31'); out('both(2) 2023 n', both.length);
+          const city = await post('GetDengueLocation', { citycode: '07', immigration: '0', startDate: '2023/01/01', endDate: '2023/12/31' });
+          console.log('kaohsiung 2023 n', city.d && city.d.length);
           JS
           node probe.mjs
