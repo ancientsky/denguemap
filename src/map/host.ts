@@ -63,6 +63,8 @@ export class MapHost {
   private popup: Popup | null = null;
   private ctx: OverlayCtx | null = null;
   padding: PaddingFn = () => ({ top: 24, right: 24, bottom: 24, left: 24 });
+  private projection: 'globe' | 'mercator' = 'mercator';
+  private lastFit: { bounds: [[number, number], [number, number]]; maxZoom: number; at: number } | null = null;
 
   constructor(container: HTMLElement) {
     const palette = readPalette();
@@ -95,7 +97,10 @@ export class MapHost {
       if (this.mode === 'remote' && e.sourceId === 'openmaptiles' && e.tile) this.tilesOk = true;
     });
     this.map.on('idle', () => {
-      if (this.styleReady) document.body.dataset.mapIdle = '1';
+      if (this.styleReady) {
+        document.body.dataset.mapIdle = '1';
+        document.body.dataset.mapZoom = this.map.getZoom().toFixed(2); // read by the smoke test
+      }
     });
     loadAdmin().then((a) => (this.admin = a), () => undefined);
     this.loadRemote();
@@ -197,10 +202,21 @@ export class MapHost {
 
   private applyProjection(): void {
     const want = this.overlay?.projection ?? 'mercator';
+    const changed = want !== this.projection;
     try {
       this.map.setProjection({ type: want });
+      this.projection = want;
     } catch {
       /* globe unsupported → stay mercator */
+    }
+    // A view usually fits its bounds before its overlay (and projection) is installed. Zoom levels
+    // mean different things on the globe, so a fit computed there leaves a flat map zoomed out
+    // (e.g. Southeast Asia after leaving the Imported globe). Redo the recent fit in the new projection.
+    const f = this.lastFit;
+    if (changed && f && Date.now() - f.at < 5000) {
+      this.map.stop();
+      this.map.setPadding({ top: 0, right: 0, bottom: 0, left: 0 });
+      this.map.fitBounds(f.bounds, { padding: this.padding(), maxZoom: f.maxZoom, duration: 0 });
     }
     if (this.map.getLayer('grat')) this.map.setLayoutProperty('grat', 'visibility', want === 'globe' ? 'visible' : 'none');
   }
@@ -252,8 +268,14 @@ export class MapHost {
 
   // ------------------------------------------------------------------ camera & popups
   fit(b: BBox, maxZoom = 11): void {
-    const pad = this.padding();
-    this.map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: pad, maxZoom, duration: prefersReducedMotion() ? 0 : 700 });
+    const bounds: [[number, number], [number, number]] = [[b[0], b[1]], [b[2], b[3]]];
+    this.lastFit = { bounds, maxZoom, at: Date.now() };
+    // Cancel any camera animation left over from the previous view (globe rotation, flyTo), and clear
+    // padding a previous jumpTo/easeTo left on the transform: MapLibre keeps it and fitBounds adds its own
+    // on top, which on phones counted the bottom sheet twice and zoomed out to Southeast Asia.
+    this.map.stop();
+    this.map.setPadding({ top: 0, right: 0, bottom: 0, left: 0 });
+    this.map.fitBounds(bounds, { padding: this.padding(), maxZoom, duration: prefersReducedMotion() || this.projection !== 'mercator' ? 0 : 700 });
   }
 
   jump(center: LngLatLike, zoom: number): void {

@@ -271,6 +271,32 @@ try {
     await ctx.close();
     console.log('interaction pass done');
   }
+  // Regression (owner report): on phones, leaving the Imported globe left the map/vector views zoomed
+  // out to Southeast Asia (MapLibre keeps camera padding from jumpTo; fitBounds added it again).
+  {
+    const ctx = await browser.newContext({ ...DEVICES.mobile, reducedMotion: 'reduce' });
+    await prepare(ctx);
+    const page = await ctx.newPage();
+    const zoomAfter = async (route) => {
+      await page.evaluate(() => { delete document.body.dataset.mapZoom; });
+      await page.click(`a[href="#/${route}"]`);
+      await page.waitForTimeout(1500);
+      await page.waitForFunction(() => document.body.dataset.mapZoom, null, { timeout: 20000 });
+      return Number(await page.evaluate(() => document.body.dataset.mapZoom));
+    };
+    try {
+      await page.goto(`${BASE}#/imported`);
+      await page.waitForFunction(() => document.body.dataset.mapIdle === '1', null, { timeout: 25000 });
+      for (const route of ['vector', 'map']) {
+        const z = await zoomAfter(route);
+        if (!(z >= 5.5)) failures.push(`[mobile-zoom] ${route} after imported: zoom ${z} (expected Taiwan, >= 5.5)`);
+      }
+    } catch (e) {
+      failures.push(`[mobile-zoom] ${e.message}`);
+    }
+    await ctx.close();
+    console.log('mobile zoom regression pass done');
+  }
   // Imported globe animation: capture mid-animation frames (motion allowed) in both themes.
   for (const theme of THEMES) {
     const ctx = await browser.newContext({ ...DEVICES.desktop, colorScheme: theme, reducedMotion: 'no-preference' });
