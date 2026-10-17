@@ -43,7 +43,7 @@ const yearColor = (i: number) => {
 };
 
 export default async function trendsView(ctx: ViewContext): Promise<View> {
-  const { app, root } = ctx;
+  const { app, root, setParams } = ctx;
   const head = h('header', { class: 'page-head' }, h('h1', { class: 'page-title' }, t('trends.title')), h('p', { class: 'page-intro' }, t('trends.intro')));
   const body = h('div', { class: 'trends' }, loadingBlock(t('trends.chartLoading')));
   root.append(head, body);
@@ -280,7 +280,7 @@ export default async function trendsView(ctx: ViewContext): Promise<View> {
   }
 
   function persist(): void {
-    app.setParams(serializeTrendParams(st, firstYear, lastYear));
+    setParams(serializeTrendParams(st, firstYear, lastYear));
   }
   function renderAll(): void {
     renderEpi(false);

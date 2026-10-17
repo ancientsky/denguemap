@@ -227,7 +227,7 @@ class CasesOverlay implements Overlay {
 
 
 export default async function mapView(ctx: ViewContext): Promise<View> {
-  const { app, root } = ctx;
+  const { app, root, setParams } = ctx;
   const pnl = panel(t('map.title'), undefined, 'panel-map');
   root.append(pnl.el);
   pnl.body.append(loadingBlock());
@@ -641,7 +641,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
 
   function commit(): void {
     renderSoon();
-    app.setParams(serializeMapParams(st, mctx));
+    setParams(serializeMapParams(st, mctx));
     setTimeout(() => !destroyed && app.announce(summaryText()), 50);
   }
 

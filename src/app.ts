@@ -54,6 +54,8 @@ export class App {
   private hostP: Promise<MapHost | null> | null = null;
   private host: MapHost | null = null;
   private navToken = 0;
+  /** The router hash last handled by onHash or written by setParams; differs from location.hash while a hashchange is pending. */
+  private hash = '';
   private manifestP: Promise<Manifest | null>;
 
   constructor(private readonly root: HTMLElement) {
@@ -224,6 +226,7 @@ export class App {
     if (getEmbedState().embed) this.carry = { ...this.carry, ...pickCarry(raw) };
     const params = stripCarry(raw);
     if (carryDiffers(raw, this.carry)) history.replaceState(history.state, '', buildHash(route, { ...this.carry, ...params }));
+    this.hash = location.hash;
     if (route === this.route && this.view) {
       this.params = params;
       this.renderEmbedLink();
@@ -259,7 +262,7 @@ export class App {
       const mod = await VIEWS[this.route]();
       if (token !== this.navToken) return;
       clear(this.viewRoot);
-      const v = await mod.default({ app: this, root: this.viewRoot, params: this.params });
+      const v = await mod.default({ app: this, root: this.viewRoot, params: this.params, setParams: (p) => this.setParams(token, p) });
       if (token !== this.navToken) {
         v.destroy();
         return;
@@ -283,12 +286,18 @@ export class App {
     void this.mountView();
   }
 
-  /** Update the URL query for the current view without re-rendering (shareable state). */
-  setParams(params: Params): void {
+  /**
+   * Update the URL query for the current view without re-rendering (shareable state). Dropped when it would
+   * overwrite a newer navigation: the calling view was superseded while it was still mounting (token), or the
+   * hash changed and its hashchange has not run yet. replaceState fires no hashchange, so the newer hash would be lost.
+   */
+  private setParams(token: number, params: Params): void {
+    if (token !== this.navToken || (isRouterHash(location.hash) && location.hash !== this.hash)) return;
     this.params = params;
     this.renderEmbedLink();
     const hash = buildHash(this.route, { ...this.carry, ...params });
     if (hash !== location.hash) history.replaceState(history.state, '', hash);
+    this.hash = location.hash;
   }
 
   // ------------------------------------------------------------------ map host
