@@ -22,7 +22,10 @@ import { shortfallYears } from '../lib/warnings';
 // aria-label and a full data table instead.
 use([BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, DataZoomInsideComponent, DataZoomSliderComponent, CanvasRenderer]);
 
-const YEAR_COLORS = ['--accent', '--local', '--imported', '#6d6ef5', '#0ea5e9', '#b05fe8', '#7c8aa0', '#65a30d'];
+// Year-comparison lines are their own categorical set (years are not local/imported, so they must not
+// borrow those colours). Validated 8-slot categorical palette, stepped separately for light and dark.
+const YEAR_COLORS_LIGHT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+const YEAR_COLORS_DARK = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
 const MAX_YEARS = 8;
 
 interface Theme {
@@ -35,8 +38,8 @@ function readTheme(): Theme {
   };
 }
 const yearColor = (i: number) => {
-  const c = YEAR_COLORS[i % YEAR_COLORS.length]!;
-  return c.startsWith('--') ? cssVar(c) : c;
+  const set = document.documentElement.dataset.theme === 'dark' ? YEAR_COLORS_DARK : YEAR_COLORS_LIGHT;
+  return set[i % set.length]!;
 };
 
 export default async function trendsView(ctx: ViewContext): Promise<View> {
