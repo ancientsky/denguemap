@@ -23,6 +23,7 @@
 ```
 https://ancientsky.github.io/denguemap/?embed=1&theme=dark&lang=en#/vector?county=64000
 https://ancientsky.github.io/denguemap/#/map?embed=1&theme=dark&lang=en
+https://ancientsky.github.io/denguemap/?embed=1&lang=zh#/map?p=custom&start=2025-12-01&end=2026-01-31&type=all
 ```
 
 規則：值必須完全符合下表（區分大小寫）；不合法的值與未知參數一律忽略（視為未提供）。兩處都有時，先看 `?` 查詢字串，其值不合法才看 `#` 內的。使用者操作造成網址更新時，`#` 內的 `embed`／`theme`／`lang` 會保留；`?` 內的本來就不會被改動。`embed` 只在載入時讀取一次。
@@ -41,10 +42,12 @@ https://ancientsky.github.io/denguemap/#/map?embed=1&theme=dark&lang=en
 
 | 頁面 | 參數 | 值 | 預設 |
 |---|---|---|---|
-| `#/map` | `year` | 資料涵蓋的西元年（4 位數） | 最新年度 |
+| `#/map` | `p` | 期間：`ytd`（今年）、`py`（去年 1 月 1 日起）、`90d`（近 90 天）、`12m`（近 12 個月）、`year`（指定年份）、`custom`（自訂） | `ytd`；**1 月**為 `py`（跨年病例仍可追蹤，同舊版疾管署地圖） |
+| | `year` | 搭配 `p=year`：資料涵蓋的西元年（4 位數） | 最新年度 |
+| | `start`、`end` | 搭配 `p=custom`：`YYYY-MM-DD`，可跨年；超出資料範圍會修正，最長 3 年（超過時調整起始日），`start` > `end` 時自動對調 | 結束日＝今天（臺灣時間） |
+| | `from`、`to` | 期間內再選的發病日子區間（`YYYY-MM-DD`），超出期間會修正 | 期間起訖日 |
 | | `type` | `local`（本土）、`imported`（境外移入）、`all` | `local` |
 | | `county` | 5 碼縣市代碼，如 `64000`（高雄市） | 全國 |
-| | `from`、`to` | 日期區間，當年第幾天（1–366），`from` > `to` 時自動對調 | `1`／當年最新日 |
 | | `mode` | `points`（點位）、`heat`（熱度）、`towns`（鄉鎮面量圖） | `points` |
 | | `color` | `recency`（距發病日）、`type`（本土／境外） | `recency` |
 | | `ns1` | `1` 顯示 NS1 快篩院所 | 關 |
@@ -61,6 +64,10 @@ https://ancientsky.github.io/denguemap/#/map?embed=1&theme=dark&lang=en
 | | `type` | `local`、`imported`、`all` | `local` |
 | | `years` | 以逗號分隔的比較年度，如 `2026,2025,2023`（最多 8 個） | 近年預設組合 |
 | `#/clusters`、`#/about` | — | 無參數 | — |
+
+`#/map` 的期間都以「資料結束日」為準：今天（臺灣時間），但不超過最新資料年度的 12 月 31 日、也不早於最新發病日。例如 `p=90d` 永遠是最近 90 天，年度切換時不需改網址。播放時起始日固定在期間（或子區間）起點，每一步把結束日往後推一天，顏色依發病日距當日的天數；暫停時網址的 `to` 即為播放到的日期。
+
+**舊連結相容：**沒有 `p`、但有 4 位數 `year` 或數字的 `from`／`to`（當年第幾天，1–366）的舊網址，視為 `p=year`（沒有 `year` 時為最新年度），`from`／`to` 換算成該年日期，例如 `year=2015&from=150&to=300` → `p=year&year=2015&from=2015-05-30&to=2015-10-27`；載入後網址會改寫成新格式。只有 `start`／`end` 而沒有 `p` 時視為 `p=custom`。
 
 網址與頁面狀態同步：使用者在嵌入的地圖上調整篩選後，iframe 網址的 `#` 部分會跟著更新，「登革熱地圖 ↗」連結也會指向同一狀態。
 
@@ -122,6 +129,7 @@ sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-san
 ```bash
 npm run build && npm run smoke      # 含嵌入模式測試
 SMOKE_PASSES=embed npm run smoke    # 只跑嵌入模式
+SMOKE_PASSES=period npm run smoke   # 期間選擇、跨年、逐日播放、舊連結、嵌入帶期間參數、2027 年度切換
 npx vitest run tests/unit/embed.test.ts
 ```
 

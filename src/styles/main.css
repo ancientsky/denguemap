@@ -311,6 +311,17 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 .field-label { font-size: 12.5px; font-weight: 650; color: var(--text-2); padding: 0; }
 .field-row { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 10px; }
 .field-row-even { grid-template-columns: 1.25fr 1fr; }
+.field-row-half { grid-template-columns: 1fr 1fr; }
+.date-input {
+  width: 100%; min-width: 0; height: 38px; padding: 0 8px 0 10px;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--surface); color: var(--text); font: inherit; font-size: 14.5px; font-variant-numeric: tabular-nums;
+}
+.date-input:hover { border-color: var(--muted); }
+.date-input:focus-visible { outline: 2.5px solid var(--focus); outline-offset: 1px; }
+:root[data-theme="dark"] .date-input { color-scheme: dark; }
+.period-hint { margin-top: -4px; }
+.empty-note { color: var(--text-2); font-weight: 600; }
 .select-wrap { position: relative; }
 .select {
   width: 100%; appearance: none; -webkit-appearance: none;

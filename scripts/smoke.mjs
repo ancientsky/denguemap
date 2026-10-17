@@ -5,7 +5,7 @@
 //
 //   npm run build && npm run smoke
 //   SMOKE_ROUTES=map,trends SMOKE_LANGS=zh SMOKE_THEMES=dark SMOKE_DEVICES=mobile npm run smoke
-//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,zoom,anim,perf,embed — default: all)
+//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed — default: all)
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -26,7 +26,7 @@ const DEVICES = {
   mobile: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
 };
 const DEVICE_NAMES = list('SMOKE_DEVICES', Object.keys(DEVICES));
-const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'zoom', 'anim', 'perf', 'embed']);
+const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'anim', 'perf', 'embed']);
 const run = (name) => PASSES.includes(name);
 const ALLOWED = /tiles\.openfreemap\.org/;
 // SMOKE_DATA=<dir>: serve /denguemap/data/* from another directory (e.g. .fixtures/data) without touching public/data.
@@ -408,6 +408,272 @@ async function embedPass() {
   }
   console.log('embed pass done');
 }
+
+// ---------------------------------------------------------------------------------------------
+// Period selector, cross-year periods, day-by-day playback, old links, year rollover (map view).
+// ---------------------------------------------------------------------------------------------
+const DATA_ROOT = DATA_DIR ?? join(ROOT, 'public', 'data');
+const epochDayOf = (iso) => Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000);
+/** Independent re-computation of the recency buckets the map should draw (type=all, all counties). */
+async function expectedRecency(fromIso, toIso, refIso) {
+  const { readFile } = await import('node:fs/promises');
+  const last = new Map();
+  for (let y = +fromIso.slice(0, 4); y <= +toIso.slice(0, 4); y++) {
+    let f;
+    try { f = JSON.parse(await readFile(join(DATA_ROOT, 'cases', `${y}.json`), 'utf8')); } catch { continue; }
+    const base = epochDayOf(`${y}-01-01`) - 1;
+    for (const [d, p, , n] of f.c) {
+      const day = base + d;
+      if (n <= 0 || day < epochDayOf(fromIso) || day > epochDayOf(toIso)) continue;
+      const key = `${f.pts[p][0]},${f.pts[p][1]}`;
+      last.set(key, Math.max(last.get(key) ?? -Infinity, day));
+    }
+  }
+  const rec = [0, 0, 0, 0];
+  const ref = epochDayOf(refIso);
+  for (const d of last.values()) {
+    const a = Math.max(0, ref - d);
+    rec[a <= 7 ? 0 : a <= 14 ? 1 : a <= 30 ? 2 : 3]++;
+  }
+  return rec.join(',');
+}
+
+async function periodPass() {
+  const fmtBadge = (iso) => iso.replaceAll('-', '/');
+  const hashParams = (page) => page.evaluate(() => Object.fromEntries(new URLSearchParams(location.hash.slice(location.hash.indexOf('?') + 1))));
+  const facts = (page) => page.evaluate(() => {
+    const rl = document.querySelector('.result-line');
+    return {
+      preset: document.querySelector('.period-field select')?.value, hint: document.querySelector('.period-hint')?.textContent ?? '',
+      range: document.querySelector('.range-vals')?.textContent ?? '', result: rl?.textContent ?? '', n: Number(rl?.dataset.n ?? -1), rec: rl?.dataset.rec ?? '', ref: rl?.dataset.ref ?? '',
+      badge: document.querySelector('.date-badge-date')?.textContent ?? '', badgeShown: !document.querySelector('.date-badge')?.hidden,
+      playing: document.querySelector('.play-btn')?.getAttribute('aria-pressed'), errors: document.querySelectorAll('.error-card').length,
+      overflowX: document.documentElement.scrollWidth - innerWidth,
+    };
+  });
+  const settle = async (page, label) => {
+    await page.waitForFunction(() => document.body.dataset.mapIdle === '1' && !document.querySelector('.inline-status.busy') && document.querySelector('.result-line')?.dataset.rec, null, { timeout: 20000 })
+      .catch(() => failures.push(`[${label}] map not settled`));
+    await page.waitForTimeout(250);
+  };
+  const ctx = await browser.newContext({ ...DEVICES.desktop, colorScheme: 'light', locale: 'en-US', timezoneId: 'Asia/Taipei', reducedMotion: 'reduce' });
+  await ctx.addInitScript(() => { try { localStorage.setItem('denguemap.lang', 'zh'); localStorage.setItem('denguemap.theme', 'light'); } catch {} });
+  await prepare(ctx);
+  const page = await ctx.newPage();
+  let label = 'period';
+  watch(page, () => label);
+  try {
+    // 1. presets
+    label = 'period-presets';
+    await page.goto(`${BASE}#/map?type=all`, { waitUntil: 'load' });
+    await settle(page, label);
+    const def = await facts(page);
+    if (!['ytd', 'py'].includes(def.preset)) failures.push(`[${label}] default period is ${def.preset}`);
+    if (def.playing !== 'false') failures.push(`[${label}] playback started on its own (reduced motion)`);
+    for (const preset of ['90d', '12m', 'py', 'year', 'custom', 'ytd']) {
+      await page.selectOption('.period-field select', preset);
+      await settle(page, label);
+      const f = await facts(page);
+      const q = await hashParams(page);
+      const want = preset === def.preset ? undefined : preset;
+      if (q.p !== want) failures.push(`[${label}] ${preset}: URL p=${q.p}`);
+      if (!/（\d+ 天）/.test(f.hint)) failures.push(`[${label}] ${preset}: period hint "${f.hint}"`);
+      if (f.errors || f.n < 0 || !f.result) failures.push(`[${label}] ${preset}: ${JSON.stringify(f)}`);
+      if (preset === '90d' && !/（90 天）/.test(f.hint)) failures.push(`[${label}] 90d spans "${f.hint}"`);
+      if (preset === 'year') {
+        if (!(await page.isVisible('.year-field select'))) failures.push(`[${label}] year select hidden`);
+        await page.selectOption('.year-field select', '2015');
+        await settle(page, label);
+        const y = await hashParams(page);
+        if (y.p !== 'year' || y.year !== '2015' || !/2015年1月1日 – 2015年12月31日/.test((await facts(page)).hint)) failures.push(`[${label}] year 2015: ${JSON.stringify(y)}`);
+      }
+    }
+    // 2. custom cross-year period through the date inputs
+    label = 'period-custom';
+    await page.selectOption('.period-field select', 'custom');
+    await settle(page, label);
+    await page.fill('.date-input >> nth=0', '2025-12-01');
+    await settle(page, label);
+    await page.fill('.date-input >> nth=1', '2026-01-31');
+    await settle(page, label);
+    let q = await hashParams(page);
+    let f = await facts(page);
+    if (q.p !== 'custom' || q.start !== '2025-12-01' || q.end !== '2026-01-31') failures.push(`[${label}] URL ${JSON.stringify(q)}`);
+    if (!/2025年12月1日.*2026年1月31日/.test(f.range) || !/（62 天）/.test(f.hint)) failures.push(`[${label}] range "${f.range}" / hint "${f.hint}"`);
+    if (f.n <= 0 || !/全部病例共 [\d,]+ 例/.test(f.result)) failures.push(`[${label}] no cases across the year boundary: ${f.result}`);
+    if (f.rec !== await expectedRecency('2025-12-01', '2026-01-31', f.ref)) failures.push(`[${label}] recency buckets ${f.rec} != expected (ref ${f.ref})`);
+    // an end date beyond the data and a > 3-year span are corrected
+    await page.fill('.date-input >> nth=0', '2010-01-01');
+    await settle(page, label);
+    f = await facts(page);
+    if (!/最長 3 年/.test(f.hint)) failures.push(`[${label}] 3-year cap not explained: "${f.hint}"`);
+    await page.fill('.date-input >> nth=0', '2025-12-01');
+    await settle(page, label);
+    await page.screenshot({ path: join(OUT, 'period-custom-zh-light.png') });
+
+    // 3. playback: start fixed at Dec 1, the current date advances one day per tick, colours follow it
+    label = 'period-play';
+    await page.selectOption('.play-row select', '1');
+    await page.click('.play-btn');
+    const seen = [];
+    for (let i = 0; i < 14; i++) {
+      await page.waitForTimeout(140);
+      seen.push((await facts(page)).badge);
+    }
+    await page.click('.play-btn'); // pause
+    await page.waitForTimeout(300);
+    f = await facts(page);
+    q = await hashParams(page);
+    const days = seen.map((b) => epochDayOf(b.replaceAll('/', '-')));
+    const steps = days.slice(1).map((d, i) => d - days[i]);
+    if (steps.some((s) => s < 0) || Math.max(...steps) > 4 || days.at(-1) - days[0] < 6) failures.push(`[${label}] badge did not advance day by day: ${seen.join(' ')}`);
+    if (!seen.every((b) => b >= '2025/12/01' && b <= '2026/01/31')) failures.push(`[${label}] badge outside the period: ${seen.join(' ')}`);
+    if (q.from || !q.to || q.p !== 'custom') failures.push(`[${label}] paused URL should keep the start and carry the current date: ${JSON.stringify(q)}`);
+    if (f.badge !== fmtBadge(q.to ?? '') || f.ref !== q.to) failures.push(`[${label}] badge ${f.badge} / ref ${f.ref} != play date ${q.to}`);
+    if (!/^2025年12月1日/.test(f.range)) failures.push(`[${label}] window start moved: ${f.range}`);
+    if (f.rec !== await expectedRecency('2025-12-01', q.to, q.to)) failures.push(`[${label}] colours do not follow the play date ${q.to}: ${f.rec}`);
+    await page.screenshot({ path: join(OUT, 'period-play-zh-light.png') });
+    // resume: continues from the paused date
+    await page.click('.play-btn');
+    await page.waitForTimeout(900);
+    await page.click('.play-btn');
+    await page.waitForTimeout(300);
+    const q2 = await hashParams(page);
+    const f2 = await facts(page);
+    if (!(q2.to > q.to)) failures.push(`[${label}] resume did not continue: ${q.to} -> ${q2.to}`);
+    if (f2.rec !== await expectedRecency('2025-12-01', q2.to, q2.to)) failures.push(`[${label}] colours after resume ${f2.rec}`);
+    // stop restores the full period
+    await page.click('button[aria-label^="停止"]');
+    await settle(page, label);
+    q = await hashParams(page);
+    if (q.from || q.to || q.start !== '2025-12-01' || q.end !== '2026-01-31') failures.push(`[${label}] stop did not restore the period: ${JSON.stringify(q)}`);
+
+    // 4. old links (year + day-of-year) are translated and rewritten
+    label = 'period-old-link';
+    await page.goto('about:blank');
+    await page.goto(`${BASE}#/map?year=2015&from=150&to=300&type=all`, { waitUntil: 'load' });
+    await settle(page, label);
+    q = await hashParams(page);
+    f = await facts(page);
+    if (q.p !== 'year' || q.year !== '2015' || q.from !== '2015-05-30' || q.to !== '2015-10-27') failures.push(`[${label}] old link → ${JSON.stringify(q)}`);
+    if (f.preset !== 'year' || !/5\/30.*10\/27/.test(f.range) || f.n <= 0) failures.push(`[${label}] ${JSON.stringify(f)}`);
+    await page.goto('about:blank');
+    await page.goto(`${BASE}#/map?from=10&to=20`, { waitUntil: 'load' });
+    await settle(page, label);
+    q = await hashParams(page);
+    const latestYear = String(JSON.parse((await import('node:fs')).readFileSync(join(DATA_ROOT, 'manifest.json'), 'utf8')).years.at(-1));
+    if (q.p !== 'year' || q.year !== latestYear || q.from !== `${latestYear}-01-10` || q.to !== `${latestYear}-01-20`) failures.push(`[${label}] old link without year → ${JSON.stringify(q)}`);
+    pages++;
+  } catch (e) {
+    failures.push(`[${label}] ${e.message}`);
+  }
+  await ctx.close();
+
+  // 5. mobile: the period control (select + date inputs) fits a 390 px phone, zh/en × light/dark
+  for (const [lang, theme] of [['zh', 'light'], ['en', 'dark']]) {
+    const label = `period-mobile-${lang}-${theme}`;
+    const mctx = await browser.newContext({ ...DEVICES.mobile, colorScheme: theme, timezoneId: 'Asia/Taipei', reducedMotion: 'reduce' });
+    await mctx.addInitScript(([th, lg]) => { try { localStorage.setItem('denguemap.theme', th); localStorage.setItem('denguemap.lang', lg); } catch {} }, [theme, lang]);
+    await prepare(mctx);
+    const mp = await mctx.newPage();
+    watch(mp, () => label);
+    try {
+      await mp.goto(`${BASE}#/map?p=custom&start=2025-12-01&end=2026-01-31&type=all`, { waitUntil: 'load' });
+      await settle(mp, label);
+      await mp.click('.sheet-handle');
+      await mp.waitForTimeout(400);
+      await mp.evaluate(() => document.querySelector('.period-field')?.scrollIntoView({ block: 'start' }));
+      const boxes = await mp.$$eval('.period-field select, .date-input', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return [r.left, r.right, r.height]; }));
+      if (boxes.length !== 3 || boxes.some(([l, r, h]) => l < 0 || r > 390 || h < 32)) failures.push(`[${label}] period controls do not fit: ${JSON.stringify(boxes)}`);
+      if ((await facts(mp)).overflowX > 0) failures.push(`[${label}] horizontal overflow`);
+      await mp.fill('.date-input >> nth=1', '2026-01-15');
+      await settle(mp, label);
+      if ((await hashParams(mp)).end !== '2026-01-15') failures.push(`[${label}] date input did not apply on mobile`);
+      await mp.evaluate(() => document.querySelectorAll('.toast').forEach((e) => e.remove()));
+      await mp.screenshot({ path: join(OUT, `period-mobile-${lang}-${theme}.png`) });
+      pages++;
+    } catch (e) {
+      failures.push(`[${label}] ${e.message}`);
+    }
+    await mctx.close();
+  }
+
+  // 6. embed mode carries period params (hash and "open full map" link)
+  {
+    const label = 'period-embed';
+    const ectx = await embedContext('desktop', { theme: 'dark', lang: 'en' });
+    const ep = await ectx.newPage();
+    watch(ep, () => label);
+    try {
+      await ep.goto(`${BASE}?embed=1&theme=dark&lang=en#/map?p=custom&start=2025-12-01&end=2026-01-31`, { waitUntil: 'load' });
+      await mapReady(ep, label);
+      await settle(ep, label);
+      const fe = await ep.evaluate(embedFacts);
+      checkEmbedFacts(fe, { route: 'map', lang: 'en', theme: 'dark', device: 'desktop', label, expectPanelOpen: true });
+      if (!/p=custom&start=2025-12-01&end=2026-01-31/.test(fe.link?.hash ?? '')) failures.push(`[${label}] open link lost the period: ${fe.link?.hash}`);
+      if ((await facts(ep)).preset !== 'custom') failures.push(`[${label}] period not applied in embed`);
+      await ep.selectOption('.period-field select', '90d');
+      await settle(ep, label);
+      // embed/theme/lang stay in the ?query (never rewritten); the hash carries the new period
+      if (!/\?embed=1&theme=dark&lang=en#\/map\?p=90d/.test(ep.url())) failures.push(`[${label}] URL after period change: ${ep.url()}`);
+      await ep.goto(`${BASE}#/map?embed=1&lang=zh&year=2015&from=150`, { waitUntil: 'load' });
+      await mapReady(ep, label);
+      await settle(ep, label);
+      const h = await ep.evaluate(() => location.hash);
+      if (!/embed=1/.test(h) || !/p=year&year=2015/.test(h) || !/from=2015-05-30/.test(h)) failures.push(`[${label}] hash-embed old link: ${h}`);
+      pages++;
+    } catch (e) {
+      failures.push(`[${label}] ${e.message}`);
+    }
+    await ectx.close();
+  }
+
+  // 7. year rollover: browser clock 2027-01-03 (Taipei), manifest lists 2027 with an empty cases/2027.json,
+  //    the latest onset is still in 2026. Default = Jan 1 last year → today; "this year" is empty, not an error.
+  {
+    const label = 'period-rollover-2027';
+    const rctx = await browser.newContext({ ...DEVICES.desktop, colorScheme: 'light', timezoneId: 'Asia/Taipei', reducedMotion: 'reduce' });
+    await rctx.addInitScript(() => { try { localStorage.setItem('denguemap.lang', 'zh'); } catch {} });
+    await prepare(rctx);
+    await rctx.route(/\/denguemap\/data\/manifest\.json/, async (r) => {
+      const res = await r.fetch();
+      const m = await res.json();
+      m.years = [...m.years.filter((y) => y < 2027), 2027];
+      m.latestOnset = m.latestOnset > '2026-12-31' ? '2026-12-30' : m.latestOnset;
+      await r.fulfill({ response: res, json: m });
+    });
+    await rctx.route(/\/denguemap\/data\/cases\/2027\.json/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"year":2027,"pts":[],"c":[]}' }));
+    const rp = await rctx.newPage();
+    await rp.clock.setFixedTime(new Date('2027-01-03T04:00:00Z'));
+    watch(rp, () => label);
+    try {
+      await rp.goto(`${BASE}#/map`, { waitUntil: 'load' });
+      await settle(rp, label);
+      let fr = await facts(rp);
+      if (fr.preset !== 'py' || !/2026年1月1日 – 2027年1月3日/.test(fr.hint) || !/1 月預設/.test(fr.hint)) failures.push(`[${label}] January default: ${JSON.stringify(fr)}`);
+      if (fr.badge !== '2027/01/03' || fr.errors) failures.push(`[${label}] badge/error: ${JSON.stringify(fr)}`);
+      if ((await rp.evaluate(() => location.hash)) !== '#/map') failures.push(`[${label}] default state should keep a bare URL`);
+      await rp.screenshot({ path: join(OUT, 'period-rollover-2027-default.png') });
+      await rp.selectOption('.period-field select', 'ytd');
+      await settle(rp, label);
+      fr = await facts(rp);
+      if (fr.n !== 0 || !/尚無病例資料/.test(fr.result) || fr.errors) failures.push(`[${label}] empty new year: ${JSON.stringify(fr)}`);
+      await rp.screenshot({ path: join(OUT, 'period-rollover-2027-ytd.png') });
+      for (const route of ['vector', 'trends', 'imported', 'clusters', 'about']) {
+        await rp.goto(`${BASE}#/${route}`, { waitUntil: 'load' });
+        await rp.waitForFunction(() => document.body.dataset.ready === '1' && document.body.dataset.route, null, { timeout: 20000 });
+        await rp.waitForTimeout(1200);
+        const n = await rp.$$eval('.error-card', (els) => els.length);
+        if (n) failures.push(`[${label}] ${route} shows an error state in 2027`);
+      }
+      pages++;
+    } catch (e) {
+      failures.push(`[${label}] ${e.message}`);
+    }
+    await rctx.close();
+  }
+  console.log('period pass done');
+}
 try {
   if (run('matrix')) for (const device of DEVICE_NAMES) {
     for (const theme of THEMES) {
@@ -529,7 +795,8 @@ try {
       await page.keyboard.press('ArrowRight');
       await page.keyboard.press('ArrowRight');
       await page.waitForTimeout(200);
-      if (!/from=3/.test(page.url())) failures.push(`[interact] keyboard slider did not update URL: ${page.url()}`);
+      // the default period starts on Jan 1 (this year, or last year in January): two steps → Jan 3
+      if (!/from=\d{4}-01-03/.test(page.url())) failures.push(`[interact] keyboard slider did not update URL: ${page.url()}`);
       step = 'reload-state';
       await resetIdle();
       await page.reload();
@@ -608,6 +875,7 @@ try {
     await ctx.close();
     console.log('interaction pass done');
   }
+  if (run('period')) await periodPass();
   // Regression (owner report): on phones, leaving the Imported globe left the map/vector views zoomed
   // out to Southeast Asia (MapLibre keeps camera padding from jumpTo; fitBounds added it again).
   if (run('zoom')) {
@@ -682,6 +950,37 @@ try {
     });
     console.log(`perf: 2015 (all types) first render ${loadMs} ms; slider drag ≈ ${perStep.toFixed(1)} ms/frame (SwiftShader software GL — real GPUs are far faster)`);
     if (!process.env.SMOKE_NO_SCREENS) await page.screenshot({ path: join(OUT, 'perf-2015-desktop.png') });
+    // Two-year custom period 2014–2015 (~59k cases, two files merged): load, drag, and playback throughput.
+    const t1 = Date.now();
+    await page.goto('about:blank');
+    await page.goto(`${BASE}#/map?p=custom&start=2014-01-01&end=2015-12-31&type=all`, { waitUntil: 'load' });
+    await page.waitForFunction(() => document.body.dataset.mapIdle === '1' && /2014.*2015/.test(document.querySelector('.result-line')?.textContent ?? ''), null, { timeout: 30000 })
+      .catch(() => failures.push('[perf] 2014–2015 period did not render'));
+    const load2 = Date.now() - t1;
+    const drag2 = await page.evaluate(async () => {
+      const el = document.querySelector('.r-to');
+      if (!(el instanceof HTMLInputElement)) return -1;
+      const t = performance.now();
+      for (let v = 730; v > 330; v -= 10) {
+        el.value = String(v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => requestAnimationFrame(() => r(null)));
+      }
+      return (performance.now() - t) / 40;
+    });
+    await page.click('button[aria-label^="Stop"], button[aria-label^="停止"]').catch(() => {});
+    // play the heavy autumn of 2015 at 4× (30 ms/tick): days advanced per second
+    await page.goto('about:blank');
+    await page.goto(`${BASE}#/map?p=custom&start=2014-01-01&end=2015-12-31&type=all&from=2015-08-01`, { waitUntil: 'load' });
+    await page.waitForFunction(() => document.body.dataset.mapIdle === '1' && document.querySelector('.result-line')?.dataset.rec, null, { timeout: 30000 });
+    await page.selectOption('.play-row select', '4');
+    await page.click('.play-btn');
+    await page.waitForTimeout(3000);
+    const playedTo = await page.evaluate(() => document.querySelector('.result-line')?.dataset.ref ?? '');
+    await page.click('.play-btn');
+    const perDay = (Date.UTC(+playedTo.slice(0, 4), +playedTo.slice(5, 7) - 1, +playedTo.slice(8, 10)) - Date.UTC(2015, 7, 1)) / 86400000 / 3;
+    console.log(`perf: 2014–2015 period (all types) first render ${load2} ms; slider drag ≈ ${drag2.toFixed(1)} ms/frame; playback at 4× ≈ ${perDay.toFixed(1)} days/s (Aug–Oct 2015)`);
+    if (!(perDay > 3)) failures.push(`[perf] playback over 2015 advanced only ${perDay.toFixed(1)} days/s`);
     await ctx.close();
   }
   if (run('embed')) await embedPass();

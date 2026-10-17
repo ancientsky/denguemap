@@ -1,5 +1,6 @@
 // Validation / clamping of URL query state per view. Pure functions (unit-tested).
-import { dayOfYear, daysInYear, isISODate } from './dates';
+import { dateFromDoy, daysInYear, isISODate } from './dates';
+import { dataRange, defaultPreset, PERIOD_PRESETS, resolvePeriod, type Period, type PeriodCtx, type PeriodPreset } from './period';
 import type { Params } from './router';
 
 export type CaseType = 'local' | 'imported' | 'all';
@@ -24,19 +25,15 @@ export function countyParam(v: string | undefined, valid: ReadonlySet<string>): 
   return v && COUNTY_RE.test(v) && valid.has(v) ? v : null;
 }
 
-/** Last valid day-of-year for a year given the latest onset date (current year stops at latestOnset). */
-export function maxDoyFor(year: number, latestOnset: string): number {
-  if (isISODate(latestOnset) && +latestOnset.slice(0, 4) === year) return dayOfYear(latestOnset);
-  return daysInYear(year);
-}
-
 // ---------------------------------------------------------------- map view
 export interface MapParams {
-  year: number;
+  /** the period: slider extent, files loaded */
+  period: Period;
+  /** selected sub-range within the period (ISO dates, inclusive) */
+  from: string;
+  to: string;
   type: CaseType;
   county: string | null;
-  from: number;
-  to: number;
   mode: MapMode;
   ns1: boolean;
   /** case colouring: days since onset (default) or local/imported */
@@ -44,27 +41,44 @@ export interface MapParams {
   /** mosquito-risk village overlay */
   mv: boolean;
 }
-export interface MapCtx {
-  years: readonly number[];
-  latestOnset: string;
+export interface MapCtx extends PeriodCtx {
   counties: ReadonlySet<string>;
 }
 
+const YEAR_RE = /^\d{4}$/;
+const DOY_RE = /^\d{1,3}$/;
+
+/**
+ * URL → state. Current params: p=ytd|py|90d|12m|year|custom, year (p=year), start/end (p=custom),
+ * from/to (ISO sub-range). Old links (`year=YYYY&from=DOY&to=DOY`, day-of-year numbers) are translated:
+ * a 4-digit `year` or numeric from/to without `p` means p=year (the newest year when `year` is absent),
+ * and numeric from/to are days of that year.
+ */
 export function normalizeMapParams(raw: Params, ctx: MapCtx): MapParams {
-  const years = ctx.years.length ? ctx.years : [new Date().getUTCFullYear()];
+  const years = ctx.years.length ? ctx.years : [+dataRange(ctx).max.slice(0, 4)];
   const latestYear = Math.max(...years);
-  let year = clampInt(raw.year, Math.min(...years), latestYear, latestYear);
-  if (!years.includes(year)) year = latestYear;
-  const maxDoy = maxDoyFor(year, ctx.latestOnset);
-  let from = clampInt(raw.from, 1, maxDoy, 1);
-  let to = clampInt(raw.to, 1, maxDoy, maxDoy);
+  const yearRaw = raw.year != null && YEAR_RE.test(raw.year) ? Math.min(latestYear, Math.max(Math.min(...years), +raw.year)) : null;
+  const year = yearRaw != null && years.includes(yearRaw) ? yearRaw : latestYear;
+  const pRaw = raw.p && (PERIOD_PRESETS as readonly string[]).includes(raw.p) ? (raw.p as PeriodPreset) : null;
+  const legacy = !pRaw && (yearRaw != null || DOY_RE.test(raw.from ?? '') || DOY_RE.test(raw.to ?? ''));
+  const preset: PeriodPreset = pRaw ?? (isISODate(raw.start) || isISODate(raw.end) ? 'custom' : legacy ? 'year' : defaultPreset(ctx));
+  const period = resolvePeriod(preset, { year, start: raw.start, end: raw.end }, ctx);
+  const doyYear = preset === 'year' ? period.year : +period.start.slice(0, 4);
+  const sub = (v: string | undefined, def: string): string => {
+    let d = def;
+    if (isISODate(v)) d = v;
+    else if (v != null && DOY_RE.test(v)) d = dateFromDoy(doyYear, Math.min(daysInYear(doyYear), Math.max(1, +v)));
+    return d < period.start ? period.start : d > period.end ? period.end : d;
+  };
+  let from = sub(raw.from, period.start);
+  let to = sub(raw.to, period.end);
   if (from > to) [from, to] = [to, from];
   return {
-    year,
-    type: oneOf(raw.type, CASE_TYPES, 'local'),
-    county: countyParam(raw.county, ctx.counties),
+    period,
     from,
     to,
+    type: oneOf(raw.type, CASE_TYPES, 'local'),
+    county: countyParam(raw.county, ctx.counties),
     mode: oneOf(raw.mode, MAP_MODES, 'points'),
     ns1: raw.ns1 === '1',
     color: oneOf(raw.color, COLOR_BY, 'recency'),
@@ -74,14 +88,18 @@ export function normalizeMapParams(raw: Params, ctx: MapCtx): MapParams {
 
 /** Serialise, omitting defaults so shared URLs stay short. */
 export function serializeMapParams(p: MapParams, ctx: MapCtx): Params {
-  const latestYear = ctx.years.length ? Math.max(...ctx.years) : p.year;
-  const maxDoy = maxDoyFor(p.year, ctx.latestOnset);
   const out: Params = {};
-  if (p.year !== latestYear) out.year = String(p.year);
+  const pr = p.period;
+  if (pr.preset !== defaultPreset(ctx)) out.p = pr.preset;
+  if (pr.preset === 'year') out.year = String(pr.year);
+  if (pr.preset === 'custom') {
+    out.start = pr.start;
+    out.end = pr.end;
+  }
   if (p.type !== 'local') out.type = p.type;
   if (p.county) out.county = p.county;
-  if (p.from !== 1) out.from = String(p.from);
-  if (p.to !== maxDoy) out.to = String(p.to);
+  if (p.from !== pr.start) out.from = p.from;
+  if (p.to !== pr.end) out.to = p.to;
   if (p.mode !== 'points') out.mode = p.mode;
   if (p.ns1) out.ns1 = '1';
   if (p.color !== 'recency') out.color = p.color;

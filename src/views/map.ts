@@ -1,18 +1,20 @@
-// #/map — 動態地圖: case points / heatmap / township choropleth, date range + 14-day playback.
+// #/map — 動態地圖: case points / heatmap / township choropleth over a (possibly multi-year) period,
+// date sub-range + day-by-day playback (expanding window, as the old CDC map).
 import type { Map as MLMap, GeoJSONSource, MapLayerMouseEvent } from 'maplibre-gl';
 import type { ExpressionSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { errorCard } from '../app';
-import { fmtDate, fmtNum, getLang, placeName, t } from '../i18n';
+import { fmtDate, fmtNum, getLang, placeName, t, type MessageKey } from '../i18n';
 import { loadAdmin, type Admin } from '../lib/admin';
-import { aggregateCases, dailyCounts, niceBreaks, topEntries, type CaseAggregate } from '../lib/aggregate';
+import { dailyCountsSet, mergeCaseYears, niceBreaks, SetAggregator, topEntries, type CaseAggregate, type CaseSet } from '../lib/aggregate';
 import { loadData, DataError } from '../lib/data';
-import { dateFromDoy, dayDiff, recencyRef } from '../lib/dates';
+import { addDays, dayDiff, epochDay, isISODate, isoFromEpochDay, recencyRef, todayTaipei } from '../lib/dates';
 import { clear, extLink, h, rafThrottle } from '../lib/dom';
 import { directionsUrl } from '../lib/directions';
 import { TAIWAN_BOUNDS } from '../lib/geo';
 import { icon } from '../lib/icons';
-import { maxDoyFor, normalizeMapParams, serializeMapParams, type CaseType, type MapCtx, type MapMode, type MapParams } from '../lib/params';
-import type { CasesYear, NS1, Summary } from '../lib/types';
+import { normalizeMapParams, serializeMapParams, type CaseType, type MapCtx, type MapMode, type MapParams } from '../lib/params';
+import { dataRange, defaultPreset, MAX_PERIOD_DAYS, PERIOD_PRESETS, resolvePeriod, spanDays, yearsTouched, type PeriodOpts, type PeriodPreset } from '../lib/period';
+import type { NS1, Summary } from '../lib/types';
 import { validateCases, validateNS1, validateSummary } from '../lib/validate';
 import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
 import { readPalette } from '../map/palette';
@@ -30,8 +32,11 @@ const L = {
 const S = { towns: 'dm-towns', cases: 'dm-cases', counties: 'dm-counties', ns1: 'dm-ns1', mvPoly: 'dm-mv-poly', mvPts: 'dm-mv-pts' };
 const NS1_ICON = 'dm-ns1-icon';
 const NS1_BADGE = 'dm-ns1-c-';
-const WINDOW = 14;
-const SPEEDS = { '1': 320, '2': 160, '4': 70 } as const;
+/** Playback tick interval (ms); one day per tick, so a full year takes ≈ 44 s at 1×. */
+const SPEEDS = { '1': 120, '2': 60, '4': 30 } as const;
+const PRESET_LABEL: Record<PeriodPreset, MessageKey> = {
+  ytd: 'period.ytd', py: 'period.py', '90d': 'period.90d', '12m': 'period.12m', year: 'period.year', custom: 'period.custom',
+};
 type Speed = keyof typeof SPEEDS;
 type VectorMod = typeof import('./vectorData');
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -220,6 +225,7 @@ class CasesOverlay implements Overlay {
   }
 }
 
+
 export default async function mapView(ctx: ViewContext): Promise<View> {
   const { app, root } = ctx;
   const pnl = panel(t('map.title'), undefined, 'panel-map');
@@ -238,13 +244,23 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   }
   if (host) host.padding = pnl.padding;
 
-  const mctx: MapCtx = { years: manifest.years, latestOnset: manifest.latestOnset, counties: new Set(admin?.counties.map((c) => c.code) ?? []) };
+  const mctx: MapCtx = { years: manifest.years, latestOnset: manifest.latestOnset, today: todayTaipei(), counties: new Set(admin?.counties.map((c) => c.code) ?? []) };
   let st: MapParams = normalizeMapParams(ctx.params, mctx);
-  let data: CasesYear | null = null;
+  /** merged cases of every year the period touches (built once per period) */
+  let set: CaseSet | null = null;
+  let setKey = '';
+  let aggregator: SetAggregator | null = null;
   let agg: CaseAggregate | null = null;
 
+  // Slider positions are 1-based day indices from the period start.
+  const p0 = () => epochDay(st.period.start);
+  const span = () => spanDays(st.period.start, st.period.end);
+  const idxOf = (iso: string) => epochDay(iso) - p0() + 1;
+  const dateOfIdx = (i: number) => isoFromEpochDay(p0() + i - 1);
+  const multiYear = () => st.period.start.slice(0, 4) !== st.period.end.slice(0, 4);
+
   // ------------------------------------------------------------- popups
-  const fmtRange = () => t('common.dateRange', { from: fmtDate(dateFromDoy(st.year, st.from)), to: fmtDate(dateFromDoy(st.year, st.to)) });
+  const fmtRange = () => t('common.dateRange', { from: fmtDate(st.from), to: fmtDate(st.to) });
   const townLabel = (code: string | null | undefined): string => {
     const town = code ? admin?.towns.get(code) : undefined;
     if (!town) return t('common.unknownTown');
@@ -257,7 +273,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     const pr = f.properties as Record<string, unknown>;
     let content: HTMLElement;
     if (layer === L.pts) {
-      content = casePopup({ title: townLabel(data?.pts[Number(f.id)]?.[2] ?? null), showLocal: st.type !== 'imported', showImported: st.type !== 'local', rangeText: fmtRange(), props: pr });
+      content = casePopup({ title: townLabel(set?.pts[Number(f.id)]?.[2] ?? null), showLocal: st.type !== 'imported', showImported: st.type !== 'local', rangeText: fmtRange(), props: pr });
       const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
       host.showPopup(coords, content, hover);
     } else if (layer === L.townsFill) {
@@ -294,15 +310,20 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   let ns1Data: NS1 | null = null;
   let vmod: VectorMod | null = null;
   let vecBundle: import('./vectorData').VectorBundle | null = null;
-  // Reference-date badge (old CDC map style): colours are "days from onset to this date".
+  // Reference-date badge (old CDC map style): colours are "days from onset to this date". During playback
+  // it is the playback date (today once playback reaches the latest data, as recencyRef defines).
+  const badgeLabel = h('span', { class: 'date-badge-label' }, t('rec.ref'));
   const badgeDate = h('span', { class: 'date-badge-date' });
-  const badge = h('div', { class: 'date-badge', title: t('rec.refNote') }, h('span', { class: 'date-badge-label' }, t('rec.ref')), badgeDate);
+  const badge = h('div', { class: 'date-badge', title: t('rec.refNote') }, badgeLabel, badgeDate);
   root.append(badge);
-  const refISO = () => recencyRef(dateFromDoy(st.year, st.to), manifest!.latestOnset);
+  const refISO = () => recencyRef(st.to, manifest!.latestOnset, mctx.today);
   function renderBadge(): void {
-    const d = refISO();
+    const recency = st.mode === 'points' && st.color === 'recency';
+    const d = recency ? refISO() : st.to;
     badgeDate.textContent = `${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)}`;
-    badge.hidden = st.mode !== 'points' || st.color !== 'recency';
+    badgeLabel.textContent = recency ? t('rec.ref') : t('map.playDate');
+    badge.hidden = !recency && !playing;
+    badge.dataset.date = d;
   }
 
   // ------------------------------------------------------------- panel UI
@@ -312,22 +333,62 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   const warnBox = h('div', { class: 'warn-slot' });
   function renderWarnings(): void {
     clear(warnBox);
-    const n = notice(casesShortfalls(manifest!.warnings, st.year, st.type).map(warningText));
+    const ys = yearsTouched(st.period.start, st.period.end, manifest!.years);
+    const n = notice(ys.flatMap((y) => casesShortfalls(manifest!.warnings, y, st.type)).map(warningText));
     if (n) warnBox.append(n);
   }
   const legend = h('ul', { class: 'legend', 'aria-label': t('common.legend') });
   const topList = h('ol', { class: 'rank-list' });
 
-  const yearSel = select(t('common.year'), [...manifest.years].reverse().map((y) => ({ value: String(y), label: String(y) })), String(st.year), (v) => {
+  // Period: preset select + year select (p=year) or two date inputs (p=custom).
+  const bounds = dataRange(mctx);
+  const periodSel = select(t('period.label'), PERIOD_PRESETS.map((p) => ({ value: p, label: t(PRESET_LABEL[p]) })), st.period.preset, (v) => {
+    if (v === 'custom') setPeriod('custom', { start: st.period.start, end: st.period.end });
+    else setPeriod(v, { year: st.period.year });
+  }, 'period-field');
+  const yearSel = select(t('common.year'), [...manifest.years].reverse().map((y) => ({ value: String(y), label: String(y) })), String(st.period.year),
+    (v) => setPeriod('year', { year: Number(v) }), 'year-field');
+  const dateField = (label: string) => {
+    const id = `dm-${Math.random().toString(36).slice(2, 8)}`;
+    const input = h('input', { type: 'date', id, class: 'date-input', min: bounds.min, max: bounds.max, required: true });
+    input.addEventListener('change', () => {
+      const a = startIn.value, b = endIn.value;
+      if (!isISODate(a) || !isISODate(b)) return syncPeriodUI(); // incomplete entry: show the current period again
+      setPeriod('custom', { start: a, end: b });
+    });
+    return { input, el: h('div', { class: 'field' }, h('label', { for: id, class: 'field-label' }, label), input) };
+  };
+  const startF = dateField(t('period.start'));
+  const endF = dateField(t('period.end'));
+  const startIn = startF.input, endIn = endF.input;
+  const customRow = h('div', { class: 'field-row field-row-half' }, startF.el, endF.el);
+  const yearRow = h('div', { class: 'field-row field-row-half' }, yearSel);
+  const periodHint = h('p', { class: 'hint period-hint' });
+  const emptyNote = h('p', { class: 'hint empty-note', role: 'status' });
+  function syncPeriodUI(): void {
+    const pr = st.period;
+    (periodSel.querySelector('select') as HTMLSelectElement).value = pr.preset;
+    (yearSel.querySelector('select') as HTMLSelectElement).value = String(pr.year);
+    yearRow.hidden = pr.preset !== 'year';
+    customRow.hidden = pr.preset !== 'custom';
+    startIn.value = pr.start;
+    endIn.value = pr.end;
+    const lines = [t('period.span', { range: t('common.dateRange', { from: fmtDate(pr.start), to: fmtDate(pr.end) }), n: fmtNum(spanDays(pr.start, pr.end)) })];
+    if (pr.preset === 'py' && defaultPreset(mctx) === 'py') lines.push(t('period.janNote'));
+    if (pr.capped) lines.push(t('period.capped', { n: Math.round(MAX_PERIOD_DAYS / 365) }));
+    periodHint.textContent = lines.join(' ');
+  }
+  function setPeriod(preset: PeriodPreset, opts: PeriodOpts): void {
     stopPlay(false);
-    const y = Number(v);
-    const maxDoy = maxDoyFor(y, manifest.latestOnset);
-    st = { ...st, year: y, from: 1, to: maxDoy };
+    const period = resolvePeriod(preset, opts, mctx);
+    st = { ...st, period, from: period.start, to: period.end };
+    syncPeriodUI();
+    range.setMax(span());
+    range.set(1, span());
     renderWarnings();
-    range.setMax(maxDoy);
-    range.set(1, maxDoy);
-    void loadYear();
-  });
+    void loadPeriod();
+  }
+
   const countyOpts = [{ value: '', label: t('common.allCounties') }, ...(admin?.counties ?? []).map((c) => ({ value: c.code, label: placeName(c) }))];
   const countySel = select(t('map.countyZoom'), countyOpts, st.county ?? '', (v) => {
     st = { ...st, county: v || null };
@@ -378,23 +439,25 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     commit();
   }, 'hospital');
 
-  const fmtShort = (doy: number) => fmtDate(dateFromDoy(st.year, doy), 'short');
+  const fmtIdx = (i: number) => fmtDate(dateOfIdx(i), multiYear() ? 'medium' : 'short');
   const range = dualRange({
-    max: maxDoyFor(st.year, manifest.latestOnset), from: st.from, to: st.to,
-    labelFrom: t('map.rangeFrom'), labelTo: t('map.rangeTo'), format: fmtShort,
+    max: span(), from: idxOf(st.from), to: idxOf(st.to),
+    labelFrom: t('map.rangeFrom'), labelTo: t('map.rangeTo'), format: fmtIdx,
     onChange: (f, to, final) => {
       if (playing) stopPlay(false);
-      st = { ...st, from: f, to };
+      st = { ...st, from: dateOfIdx(f), to: dateOfIdx(to) };
       if (final) commit();
       else renderSoon();
     },
   });
 
-  // Play controls
+  // Playback (old CDC map): the start stays fixed, the end ("current date") advances one day per tick, and
+  // colours are days from onset to that date.
   let playing = false;
   let playTimer: ReturnType<typeof setTimeout> | undefined;
-  let preRange: [number, number] | null = null;
-  let playEnd = 0;
+  let preRange: [string, string] | null = null;
+  let playStart = '';
+  let playEnd = '';
   let speed: Speed = '1';
   const playBtn = h('button', { type: 'button', class: 'btn btn-primary play-btn', on: { click: () => (playing ? pausePlay() : startPlay()) } });
   const stopBtn = h('button', { type: 'button', class: 'btn btn-icon', 'aria-label': t('map.stop'), title: t('map.stop'), disabled: true, on: { click: () => stopPlay(true) } }, icon('stop'));
@@ -406,26 +469,23 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     playBtn.title = playing ? t('map.pause') : t('map.playHint');
     playBtn.setAttribute('aria-pressed', String(playing));
     stopBtn.toggleAttribute('disabled', !preRange);
+    renderBadge();
   }
   function startPlay(): void {
-    const maxDoy = maxDoyFor(st.year, manifest!.latestOnset);
     if (!preRange) {
       preRange = [st.from, st.to];
-      let a = st.from, b = st.to;
-      if (b - a + 1 <= WINDOW) [a, b] = [1, maxDoy];
-      playEnd = b;
-      st = { ...st, from: a, to: Math.min(b, a + WINDOW - 1) };
+      // a one-day selection plays the whole period
+      [playStart, playEnd] = st.from < st.to ? [st.from, st.to] : [st.period.start, st.period.end];
+      st = { ...st, from: playStart, to: playStart };
     } else if (st.to >= playEnd) {
-      // finished: restart from the beginning of the original range
-      const a = preRange[1] - preRange[0] + 1 <= WINDOW ? 1 : preRange[0];
-      st = { ...st, from: a, to: Math.min(playEnd, a + WINDOW - 1) };
+      st = { ...st, from: playStart, to: playStart }; // finished: restart
     }
     playing = true;
     renderPlayBtn();
     tick();
   }
   function tick(): void {
-    range.set(st.from, st.to);
+    range.set(idxOf(st.from), idxOf(st.to));
     renderSoon();
     if (st.to >= playEnd) {
       playing = false;
@@ -435,7 +495,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     }
     playTimer = setTimeout(() => {
       if (!playing) return;
-      st = { ...st, from: st.from + 1, to: st.to + 1 };
+      st = { ...st, to: addDays(st.to, 1) };
       tick();
     }, SPEEDS[speed]);
   }
@@ -451,23 +511,24 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     playing = false;
     if (restore && preRange) {
       st = { ...st, from: preRange[0], to: preRange[1] };
-      range.set(st.from, st.to);
+      range.set(idxOf(st.from), idxOf(st.to));
     }
     preRange = null;
     renderPlayBtn();
     if (wasActive && restore) commit();
   }
-  renderPlayBtn();
 
   pnl.body.append(
     kpiBox,
-    section(null, h('div', { class: 'field-row' }, yearSel, countySel), typeSeg),
-    section(t('map.range'), range.el, h('div', { class: 'play-row' }, playBtn, stopBtn, speedSel), statusLine, warnBox),
+    section(null, h('div', { class: 'field-row field-row-half' }, periodSel, countySel), yearRow, customRow, periodHint, emptyNote, typeSeg),
+    section(t('map.range'), range.el, h('div', { class: 'play-row' }, playBtn, stopBtn, speedSel), h('p', { class: 'hint' }, t('map.playHint')), statusLine, warnBox),
     section(null, modeSeg, colorSeg, mvToggle, mvNote, ns1Toggle, ns1Note),
     section(t('common.legend'), legend, resultLine),
     section(t('map.topTowns'), topList),
     h('p', { class: 'privacy-note' }, icon('pin'), t('map.privacy')),
   );
+  syncPeriodUI();
+  renderPlayBtn();
 
   // ------------------------------------------------------------- KPIs
   loadData('summary.json', validateSummary).then((s) => !destroyed && renderKpis(s), (e: unknown) => {
@@ -527,9 +588,9 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   }
 
   function render(): void {
-    if (!data || destroyed) return;
-    agg = aggregateCases(data, { from: st.from, to: st.to, type: st.type, county: st.county });
-    const features = caseFeatures(data, agg, refISO());
+    if (!set || !aggregator || destroyed) return;
+    agg = aggregator.update({ from: epochDay(st.from), to: epochDay(st.to), type: st.type, county: st.county });
+    const features = caseFeatures(set, agg, refISO());
     renderBadge();
     const towns = new Map<string, number>();
     let max = 0;
@@ -541,7 +602,18 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     overlay?.setCases({ type: 'FeatureCollection', features }, towns, breaks);
     if (st.mode === 'towns') renderLegend();
     const text = summaryText();
-    resultLine.textContent = features.length ? text : `${text} ${t('map.noCases')}`;
+    // a period without any case yet (e.g. "this year" on Jan 2): a friendly note instead of "0 cases"
+    const noData = set.length === 0
+      ? t('map.noData', { range: t('common.dateRange', { from: fmtDate(st.period.start), to: fmtDate(st.period.end) }), date: fmtDate(manifest!.latestOnset) })
+      : '';
+    emptyNote.textContent = noData;
+    resultLine.textContent = noData || (features.length ? text : `${text} ${t('map.noCases')}`);
+    // for tests: features per recency bucket (≤7, 8–14, 15–30, >30 days) and the reference date
+    const rec = [0, 0, 0, 0];
+    for (const f of features) rec[f.properties!.r as number]!++;
+    resultLine.dataset.n = String(features.length);
+    resultLine.dataset.rec = rec.join(',');
+    resultLine.dataset.ref = refISO();
     app.mapSummary(text);
     renderTop();
   }
@@ -576,26 +648,36 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   function refreshHistogram(): void {
     renderWarnings();
     range.el.dataset.type = st.type;
-    range.setHistogram(data ? dailyCounts(data, maxDoyFor(st.year, manifest!.latestOnset), st.type) : null);
+    range.setHistogram(set ? dailyCountsSet(set, p0(), span(), st.type) : null);
   }
 
-  async function loadYear(): Promise<void> {
-    const year = st.year;
-    statusLine.textContent = t('map.loadingYear', { year });
+  /** Load (cached, versioned) every cases/{year}.json the period touches and merge them. */
+  async function loadPeriod(): Promise<void> {
+    const years = yearsTouched(st.period.start, st.period.end, manifest!.years);
+    const key = years.join(',');
+    if (key === setKey && set) {
+      refreshHistogram();
+      commit();
+      return;
+    }
+    statusLine.textContent = t('map.loadingYear', { year: years.length > 1 ? `${years[0]}–${years[years.length - 1]}` : String(years[0] ?? '') });
     statusLine.classList.add('busy');
+    const current = () => yearsTouched(st.period.start, st.period.end, manifest!.years).join(',') === key;
     try {
-      const d = await loadData(`cases/${year}.json`, (v) => validateCases(v, year));
-      if (destroyed || year !== st.year) return;
-      data = d;
+      const files = await Promise.all(years.map((y) => loadData(`cases/${y}.json`, (v) => validateCases(v, y))));
+      if (destroyed || !current()) return;
+      set = mergeCaseYears(files);
+      setKey = key;
+      aggregator = new SetAggregator(set);
       statusLine.textContent = '';
       statusLine.classList.remove('busy');
       refreshHistogram();
       commit();
     } catch (e) {
-      if (destroyed || year !== st.year) return;
+      if (destroyed || !current()) return;
       statusLine.classList.remove('busy');
       clear(statusLine);
-      statusLine.append(errorCard('', () => void loadYear(), e instanceof DataError ? e.file : `cases/${year}.json`));
+      statusLine.append(errorCard('', () => void loadPeriod(), e instanceof DataError ? e.file : `cases/${years.join(',')}.json`));
     }
   }
 
@@ -647,6 +729,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
 
   // ------------------------------------------------------------- go
   renderLegend();
+  renderWarnings();
   if (overlay && host) {
     overlay.mode = st.mode;
     overlay.colorMode = st.color;
@@ -656,7 +739,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   }
   if (st.ns1) void applyNs1();
   if (st.mv) void applyVector();
-  await loadYear();
+  await loadPeriod();
 
   return {
     destroy() {

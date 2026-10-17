@@ -12,7 +12,7 @@
 
 ## 功能
 
-- **動態地圖**：病例點位（最小統計區中心點）、日期區間＋播放、本土／境外、縣市定位、點位／熱度／鄉鎮面量圖、NS1 快篩院所
+- **動態地圖**：病例點位（最小統計區中心點）、期間（今年／去年 1 月 1 日起／近 90 天／近 12 個月／指定年份／自訂，可跨年；1 月預設自去年 1 月 1 日起）、逐日播放（同舊版：起始日固定、每步推進一天，顏色依發病日距當日天數）、本土／境外、縣市定位、點位／熱度／鄉鎮面量圖、NS1 快篩院所
 - **聚集警示**：近兩週群聚區域與近 14 天本土病例鄉鎮
 - **蚊媒地圖**：村里病媒蚊風險（近 5 週）、危險級里別表、CSV 下載
 - **病例趨勢**：1998 年起每日／每週流行曲線、歷年同週比較、年度長條圖
@@ -38,7 +38,10 @@ npm run dev          # http://localhost:5173/denguemap/
 npm run check        # typecheck + 單元測試 + build + Playwright 煙霧測試
 npx vitest run       # 全部測試（前端 + 資料管線）
 npm run data         # 重新抓資料（需能連到來源主機，一般在 GitHub Actions 執行）
+DATA_TODAY=2027-01-03 DATA_OUT_DIR=/tmp/x npm run data   # 模擬其他日期（如跨年）；勿寫入 public/data
 ```
+
+年度切換不需改程式：管線依臺灣日期決定年份，1 月 1 日起就會產生新年度的 `cases/{year}.json`（尚無病例時為空檔）並列入 `manifest.years`；前端的期間都相對於「今天」計算（測試：`tests/data/rollover.e2e.test.mjs`、`tests/unit/period.test.ts`、`SMOKE_PASSES=period`）。
 
 手動更新資料：Actions → `data` → Run workflow（`allow_shrink` 只在疾管署正式下修數字後使用）。
 

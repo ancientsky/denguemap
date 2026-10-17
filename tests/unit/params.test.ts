@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  clampInt, maxDoyFor, normalizeImportedParams, normalizeMapParams, normalizeTrendParams, normalizeVectorParams,
+  clampInt, normalizeImportedParams, normalizeMapParams, normalizeTrendParams, normalizeVectorParams,
   oneOf, serializeImportedParams, serializeMapParams, serializeTrendParams,
 } from '../../src/lib/params';
 
-const ctx = { years: [2015, 2023, 2024, 2025, 2026], latestOnset: '2026-10-14', counties: new Set(['64000', '67000']) };
+const ctx = { years: [2015, 2023, 2024, 2025, 2026], latestOnset: '2026-10-14', today: '2026-10-17', counties: new Set(['64000', '67000']) };
 
 describe('clampInt / oneOf', () => {
   it('clamps and defaults', () => {
@@ -20,29 +20,55 @@ describe('clampInt / oneOf', () => {
 });
 
 describe('map params', () => {
-  it('defaults to the latest year and its full range', () => {
+  const ytd = { preset: 'ytd', year: 2026, start: '2026-01-01', end: '2026-10-17', capped: false };
+  it('defaults to this year up to today (Taiwan)', () => {
     const p = normalizeMapParams({}, ctx);
-    expect(p).toEqual({ year: 2026, type: 'local', county: null, from: 1, to: 287, mode: 'points', ns1: false, color: 'recency', mv: false });
-    expect(maxDoyFor(2026, ctx.latestOnset)).toBe(287);
-    expect(maxDoyFor(2024, ctx.latestOnset)).toBe(366);
+    expect(p).toEqual({ period: ytd, from: '2026-01-01', to: '2026-10-17', type: 'local', county: null, mode: 'points', ns1: false, color: 'recency', mv: false });
   });
-  it('clamps day ranges to the year and swaps reversed ranges', () => {
-    expect(normalizeMapParams({ year: '2025', from: '0', to: '999' }, ctx)).toMatchObject({ year: 2025, from: 1, to: 365 });
-    expect(normalizeMapParams({ from: '200', to: '100' }, ctx)).toMatchObject({ from: 100, to: 200 });
-    expect(normalizeMapParams({ to: '300' }, ctx)).toMatchObject({ to: 287 });
+  it('translates old year/day-of-year links to dates', () => {
+    expect(normalizeMapParams({ year: '2025', from: '0', to: '999' }, ctx)).toMatchObject({ period: { preset: 'year', year: 2025, start: '2025-01-01', end: '2025-12-31' }, from: '2025-01-01', to: '2025-12-31' });
+    expect(normalizeMapParams({ year: '2015', from: '150', to: '300' }, ctx)).toMatchObject({ period: { preset: 'year', year: 2015 }, from: '2015-05-30', to: '2015-10-27' });
+    // no year: the newest year (old default), reversed ranges swapped
+    expect(normalizeMapParams({ from: '200', to: '100' }, ctx)).toMatchObject({ period: { preset: 'year', year: 2026 }, from: '2026-04-10', to: '2026-07-19' });
+    expect(normalizeMapParams({ to: '300' }, ctx)).toMatchObject({ from: '2026-01-01', to: '2026-10-17' }); // clamped to the data end
+    // an old link re-serialises in the new form
+    expect(serializeMapParams(normalizeMapParams({ year: '2015', from: '150', to: '300' }, ctx), ctx)).toEqual({ p: 'year', year: '2015', from: '2015-05-30', to: '2015-10-27' });
   });
   it('rejects years without data, unknown counties and bad enums', () => {
-    expect(normalizeMapParams({ year: '2019' }, ctx).year).toBe(2026);
-    expect(normalizeMapParams({ year: '1800' }, ctx).year).toBe(2015); // clamped to the earliest year
+    expect(normalizeMapParams({ year: '2019' }, ctx).period.year).toBe(2026);
+    expect(normalizeMapParams({ year: '1800' }, ctx).period.year).toBe(2015); // clamped to the earliest year
+    expect(normalizeMapParams({ year: '<b>' }, ctx).period).toEqual(ytd);
+    expect(normalizeMapParams({ p: 'evil', start: 'x', end: '2026-13-01' }, ctx).period).toEqual(ytd);
     expect(normalizeMapParams({ county: '99999' }, ctx).county).toBeNull();
     expect(normalizeMapParams({ county: '64000' }, ctx).county).toBe('64000');
     expect(normalizeMapParams({ type: 'evil', mode: 'x', ns1: 'yes' }, ctx)).toMatchObject({ type: 'local', mode: 'points', ns1: false });
   });
+  it('accepts presets and custom cross-year periods', () => {
+    expect(normalizeMapParams({ p: '90d' }, ctx).period).toMatchObject({ start: '2026-07-20', end: '2026-10-17' });
+    expect(normalizeMapParams({ p: '12m' }, ctx).period).toMatchObject({ start: '2025-10-18', end: '2026-10-17' });
+    expect(normalizeMapParams({ p: 'py' }, ctx).period).toMatchObject({ start: '2025-01-01', end: '2026-10-17' });
+    const c = normalizeMapParams({ p: 'custom', start: '2025-12-01', end: '2026-01-31', from: '2025-12-20' }, ctx);
+    expect(c).toMatchObject({ period: { preset: 'custom', start: '2025-12-01', end: '2026-01-31' }, from: '2025-12-20', to: '2026-01-31' });
+    // start/end without p means custom
+    expect(normalizeMapParams({ start: '2015-06-01', end: '2016-12-31' }, ctx).period).toMatchObject({ preset: 'custom', start: '2015-06-01', end: '2016-12-31', capped: false });
+    // longer than 3 years: the start moves (capped); before the first data year: clamped
+    expect(normalizeMapParams({ start: '2015-01-01', end: '2024-12-31' }, ctx).period).toMatchObject({ start: '2022-01-01', end: '2024-12-31', capped: true });
+    expect(normalizeMapParams({ start: '1990-01-01', end: '2015-03-01' }, ctx).period).toMatchObject({ start: '2015-01-01', end: '2015-03-01', capped: false });
+    // sub-range outside the period is clamped
+    expect(normalizeMapParams({ p: 'custom', start: '2025-12-01', end: '2026-01-31', from: '2020-01-01', to: '2027-01-01' }, ctx)).toMatchObject({ from: '2025-12-01', to: '2026-01-31' });
+  });
   it('serialises without defaults and round-trips', () => {
     expect(serializeMapParams(normalizeMapParams({}, ctx), ctx)).toEqual({});
-    const p = normalizeMapParams({ year: '2015', type: 'all', county: '67000', from: '150', to: '300', mode: 'towns', ns1: '1', color: 'type', mv: '1' }, ctx);
-    const s = serializeMapParams(p, ctx);
-    expect(normalizeMapParams(s, ctx)).toEqual(p);
+    for (const raw of <Record<string, string>[]>[
+      { p: 'year', year: '2015', type: 'all', county: '67000', from: '2015-05-30', to: '2015-10-27', mode: 'towns', ns1: '1', color: 'type', mv: '1' },
+      { p: 'custom', start: '2025-12-01', end: '2026-01-31', to: '2026-01-10' },
+      { p: '90d' }, { p: 'py' }, { p: '12m', from: '2026-01-01' },
+    ]) {
+      const p = normalizeMapParams(raw, ctx);
+      const s = serializeMapParams(p, ctx);
+      expect(s).toEqual(raw);
+      expect(normalizeMapParams(s, ctx)).toEqual(p);
+    }
   });
 });
 

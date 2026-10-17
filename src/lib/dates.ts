@@ -55,6 +55,21 @@ export function recencyRef(rangeEnd: string, latestOnset: string, today: string 
   return rangeEnd >= latestOnset && today > rangeEnd ? today : rangeEnd;
 }
 
+/** Days since 1970-01-01 of an ISO date (NaN if invalid). */
+export function epochDay(iso: string): number {
+  return Math.round(parseISO(iso) / DAY);
+}
+
+/** ISO date of an epoch day. */
+export function isoFromEpochDay(n: number): string {
+  return toISO(n * DAY);
+}
+
+/** Epoch day of 1-based day-of-year `doy` in `year`. */
+export function epochDayOfDoy(year: number, doy: number): number {
+  return Math.round(Date.UTC(year, 0, 1) / DAY) + doy - 1;
+}
+
 /** Whole days from a to b (b - a). */
 export function dayDiff(a: string, b: string): number {
   return Math.round((parseISO(b) - parseISO(a)) / DAY);

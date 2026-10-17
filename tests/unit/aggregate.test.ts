@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateCases, annualTotals, dailyCounts, expandSparse, isoWeekMatrix, lowerBound, niceBreaks, topEntries, trendSeries, weeklyBins } from '../../src/lib/aggregate';
-import { addDays, dateFromDoy, dayOfYear, isISODate, isoWeek, parseISO } from '../../src/lib/dates';
+import { aggregateSet, annualTotals, dailyCountsSet, expandSparse, isoWeekMatrix, lowerBoundSet, mergeCaseYears, niceBreaks, topEntries, trendSeries, weeklyBins } from '../../src/lib/aggregate';
+import { addDays, dateFromDoy, dayOfYear, epochDayOfDoy, isISODate, isoWeek, parseISO } from '../../src/lib/dates';
 import { greatCircle } from '../../src/lib/geo';
 import type { CasesYear, Trend } from '../../src/lib/types';
 
@@ -9,26 +9,28 @@ const file: CasesYear = {
   pts: [[120.3, 22.6, '64000090'], [120.2, 23.0, '67000010'], [121.5, 25.0, null]],
   c: [[10, 0, 0, 2], [10, 1, 1, 1], [20, 0, 0, 1], [20, 2, 1, 4], [30, 1, 0, 3]],
 };
+const set = mergeCaseYears([file]);
+const E = (doy: number) => epochDayOfDoy(2026, doy);
 
-describe('aggregateCases', () => {
+describe('aggregateSet (single year)', () => {
   it('filters by range and type', () => {
-    const a = aggregateCases(file, { from: 10, to: 20, type: 'local', county: null });
+    const a = aggregateSet(set, { from: E(10), to: E(20), type: 'local', county: null });
     expect(a.total).toEqual({ local: 3, imported: 0 });
     expect(a.byPt.get(0)).toEqual([3, 0]);
     expect(a.byTown.get('64000090')).toEqual([3, 0]);
-    const all = aggregateCases(file, { from: 1, to: 366, type: 'all', county: null });
+    const all = aggregateSet(set, { from: E(1), to: E(366), type: 'all', county: null });
     expect(all.total).toEqual({ local: 6, imported: 5 });
     expect(all.byTown.size).toBe(2); // null-town point counted in total, not in towns
   });
   it('filters by county (null towns excluded)', () => {
-    const a = aggregateCases(file, { from: 1, to: 366, type: 'all', county: '67000' });
+    const a = aggregateSet(set, { from: E(1), to: E(366), type: 'all', county: '67000' });
     expect(a.total).toEqual({ local: 3, imported: 1 });
     expect([...a.byPt.keys()]).toEqual([1]);
   });
   it('lowerBound / dailyCounts / topEntries', () => {
-    expect(lowerBound(file.c, 20)).toBe(2);
-    expect(lowerBound(file.c, 31)).toBe(5);
-    const d = dailyCounts(file, 365, 'imported');
+    expect(lowerBoundSet(set, E(20))).toBe(2);
+    expect(lowerBoundSet(set, E(31))).toBe(5);
+    const d = dailyCountsSet(set, E(1), 365, 'imported');
     expect(d[9]).toBe(1);
     expect(d[19]).toBe(4);
     expect(topEntries(new Map([['a', [1, 0]], ['b', [5, 1]], ['c', [2, 2]]]), 2).map((r) => r[0])).toEqual(['b', 'c']);

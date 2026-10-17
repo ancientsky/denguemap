@@ -1,19 +1,9 @@
 // Pure aggregation helpers (unit-tested).
-import { DAY_MS, isoWeek, parseISO, toISO, weekStart } from './dates';
+import { DAY_MS, epochDayOfDoy, isoWeek, parseISO, toISO, weekStart } from './dates';
 import type { CaseType } from './params';
-import type { CasesYear, LI, Trend } from './types';
+import type { CasePoint, CasesYear, LI, Trend } from './types';
 
-/** First index in sorted rows with row[0] >= doy. */
-export function lowerBound(rows: readonly (readonly number[])[], doy: number): number {
-  let lo = 0, hi = rows.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (rows[mid]![0]! < doy) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
+/** Inclusive day range (epoch days, see CaseSet) and filters. */
 export interface CaseFilter {
   from: number;
   to: number;
@@ -24,49 +14,141 @@ export interface CaseFilter {
 export interface CaseAggregate {
   /** ptIndex → [local, imported] */
   byPt: Map<number, [number, number]>;
-  /** ptIndex → latest onset day-of-year in range */
+  /** ptIndex → latest onset in range (epoch day) */
   lastDay: Map<number, number>;
   /** townCode → [local, imported] */
   byTown: Map<string, [number, number]>;
   total: LI;
 }
 
-export function aggregateCases(file: CasesYear, f: CaseFilter): CaseAggregate {
-  const byPt = new Map<number, [number, number]>();
-  const lastDay = new Map<number, number>();
-  const byTown = new Map<string, [number, number]>();
-  const total = { local: 0, imported: 0 };
-  const { c, pts } = file;
-  for (let i = lowerBound(c, f.from); i < c.length; i++) {
-    const [d, p, imp, n] = c[i]!;
-    if (d > f.to) break;
-    if (f.type === 'local' && imp) continue;
-    if (f.type === 'imported' && !imp) continue;
-    const town = pts[p]?.[2] ?? null;
-    if (f.county && (!town || town.slice(0, 5) !== f.county)) continue;
-    let a = byPt.get(p);
-    if (!a) byPt.set(p, (a = [0, 0]));
-    a[imp] += n;
-    lastDay.set(p, d); // rows are sorted by day, so the last write is the latest onset
-    if (town) {
-      let t = byTown.get(town);
-      if (!t) byTown.set(town, (t = [0, 0]));
-      t[imp] += n;
-    }
-    if (imp) total.imported += n;
-    else total.local += n;
-  }
-  return { byPt, lastDay, byTown, total };
+// ------------------------------------------------------------------ multi-year case sets
+
+/**
+ * Case rows of one or more cases/{year}.json files merged into one day-sorted set (built once per period).
+ * Days are epoch days (days since 1970-01-01), so a period can span years. Points with identical
+ * coordinates in different years are merged, so a statistical area is one map feature across the period.
+ */
+export interface CaseSet {
+  pts: CasePoint[];
+  day: Int32Array;
+  pt: Int32Array;
+  imp: Uint8Array;
+  n: Int32Array;
+  length: number;
 }
 
-/** Daily totals for the year (index 0 = day 1) for a case type — used by the range slider sparkline. */
-export function dailyCounts(file: CasesYear, days: number, type: CaseType): Uint32Array {
-  const out = new Uint32Array(days);
-  for (const [d, , imp, n] of file.c) {
-    if (d > days) continue;
-    if (type === 'local' && imp) continue;
-    if (type === 'imported' && !imp) continue;
-    out[d - 1]! += n;
+export function mergeCaseYears(files: readonly CasesYear[]): CaseSet {
+  const sorted = [...files].sort((a, b) => a.year - b.year);
+  let len = 0;
+  for (const f of sorted) len += f.c.length;
+  const day = new Int32Array(len), pt = new Int32Array(len), imp = new Uint8Array(len), n = new Int32Array(len);
+  const pts: CasePoint[] = [];
+  const byKey = new Map<string, number>();
+  let k = 0;
+  for (const f of sorted) {
+    const remap = new Int32Array(f.pts.length);
+    f.pts.forEach((p, i) => {
+      const key = `${p[0]},${p[1]}`;
+      let j = byKey.get(key);
+      if (j === undefined) {
+        j = pts.length;
+        byKey.set(key, j);
+        pts.push(p);
+      } else if (!pts[j]![2] && p[2]) pts[j] = p;
+      remap[i] = j;
+    });
+    const base = epochDayOfDoy(f.year, 1) - 1;
+    for (const [d, p, i, c] of f.c) {
+      day[k] = base + d;
+      pt[k] = remap[p]!;
+      imp[k] = i;
+      n[k] = c;
+      k++;
+    }
+  }
+  return { pts, day, pt, imp, n, length: k };
+}
+
+/** First row index with day >= d. */
+export function lowerBoundSet(set: CaseSet, d: number): number {
+  let lo = 0, hi = set.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (set.day[mid]! < d) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Aggregation of a CaseSet over [from, to] (epoch days) that can be extended forward cheaply:
+ * playback only adds the rows of the new day(s) instead of re-scanning the whole period.
+ * The returned aggregate is mutated by later calls; `lastDay` holds epoch days.
+ */
+export class SetAggregator {
+  private key = '';
+  private to = -Infinity;
+  private cursor = 0;
+  private agg: CaseAggregate = emptyAgg();
+  constructor(private readonly set: CaseSet) {}
+
+  update(f: CaseFilter): CaseAggregate {
+    const key = `${f.from}|${f.type}|${f.county ?? ''}`;
+    if (key !== this.key || f.to < this.to) {
+      this.key = key;
+      this.agg = emptyAgg();
+      this.cursor = lowerBoundSet(this.set, f.from);
+    }
+    this.to = f.to;
+    const { day, pt, imp, n, pts } = this.set;
+    const { byPt, lastDay, byTown, total } = this.agg;
+    let i = this.cursor;
+    for (; i < this.set.length; i++) {
+      const d = day[i]!;
+      if (d > f.to) break;
+      const im = imp[i]! as 0 | 1;
+      if (f.type === 'local' && im) continue;
+      if (f.type === 'imported' && !im) continue;
+      const p = pt[i]!;
+      const town = pts[p]?.[2] ?? null;
+      if (f.county && (!town || town.slice(0, 5) !== f.county)) continue;
+      const c = n[i]!;
+      let a = byPt.get(p);
+      if (!a) byPt.set(p, (a = [0, 0]));
+      a[im] += c;
+      lastDay.set(p, d);
+      if (town) {
+        let t = byTown.get(town);
+        if (!t) byTown.set(town, (t = [0, 0]));
+        t[im] += c;
+      }
+      if (im) total.imported += c;
+      else total.local += c;
+    }
+    this.cursor = i;
+    return this.agg;
+  }
+}
+
+function emptyAgg(): CaseAggregate {
+  return { byPt: new Map(), lastDay: new Map(), byTown: new Map(), total: { local: 0, imported: 0 } };
+}
+
+/** One-shot aggregation of a CaseSet over [from, to] (epoch days). */
+export function aggregateSet(set: CaseSet, f: CaseFilter): CaseAggregate {
+  return new SetAggregator(set).update(f);
+}
+
+/** Daily totals of a CaseSet for `len` days starting at epoch day `start` (index 0 = start). */
+export function dailyCountsSet(set: CaseSet, start: number, len: number, type: CaseType): Uint32Array {
+  const out = new Uint32Array(Math.max(0, len));
+  for (let i = lowerBoundSet(set, start); i < set.length; i++) {
+    const k = set.day[i]! - start;
+    if (k >= len) break;
+    const im = set.imp[i]!;
+    if (type === 'local' && im) continue;
+    if (type === 'imported' && !im) continue;
+    out[k]! += set.n[i]!;
   }
   return out;
 }

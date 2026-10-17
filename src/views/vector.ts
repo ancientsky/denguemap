@@ -5,10 +5,10 @@ import type { Map as MLMap, GeoJSONSource, MapLayerMouseEvent } from 'maplibre-g
 import { errorCard } from '../app';
 import { fmtDate, fmtNum, fmtPct, getLang, placeName, t, type MessageKey } from '../i18n';
 import { loadAdmin, type Admin } from '../lib/admin';
-import { aggregateCases } from '../lib/aggregate';
+import { aggregateSet, mergeCaseYears } from '../lib/aggregate';
 import { csvBlob, downloadBlob } from '../lib/csv';
 import { DataError, loadData } from '../lib/data';
-import { addDays, dayOfYear, recencyRef } from '../lib/dates';
+import { addDays, epochDay, recencyRef } from '../lib/dates';
 import { clear, h } from '../lib/dom';
 import { TAIWAN_BOUNDS, type BBox } from '../lib/geo';
 import { icon } from '../lib/icons';
@@ -205,20 +205,11 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
     try {
       const files = await Promise.all(years.map((y) => loadData(`cases/${y}.json`, (v) => validateCases(v, y))));
       if (destroyed || !showCases) return;
-      const feats: GeoJSON.Feature[] = [];
-      caseTowns = new Map();
-      let total = 0;
-      for (const f of files) {
-        const from = f.year === +start.slice(0, 4) ? dayOfYear(start) : 1;
-        const to = f.year === +ref.slice(0, 4) ? dayOfYear(ref) : 366;
-        const agg = aggregateCases(f, { from, to, type: 'all', county: null });
-        const base = f.year * 100_000;
-        for (const ft of caseFeatures(f, agg, colourRef, base)) {
-          feats.push(ft);
-          caseTowns.set(Number(ft.id), f.pts[Number(ft.id) - base]?.[2] ?? null);
-        }
-        total += agg.total.local + agg.total.imported;
-      }
+      const set = mergeCaseYears(files);
+      const agg = aggregateSet(set, { from: epochDay(start), to: epochDay(ref), type: 'all', county: null });
+      const feats: GeoJSON.Feature[] = caseFeatures(set, agg, colourRef);
+      caseTowns = new Map(feats.map((ft) => [Number(ft.id), set.pts[Number(ft.id)]?.[2] ?? null]));
+      const total = agg.total.local + agg.total.imported;
       overlay?.setCases({ type: 'FeatureCollection', features: feats });
       clear(caseNote);
       caseNote.append(

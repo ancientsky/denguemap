@@ -2,28 +2,28 @@
 // and popup content. Used by the map view and by the vector view's "recent cases" overlay.
 import type { CircleLayerSpecification, ExpressionSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { fmtDate, fmtNum, t } from '../i18n';
-import { recencyBucket, type CaseAggregate } from '../lib/aggregate';
-import { dateFromDoy, dayDiff } from '../lib/dates';
+import { recencyBucket, type CaseAggregate, type CaseSet } from '../lib/aggregate';
+import { epochDay, isoFromEpochDay } from '../lib/dates';
 import { h } from '../lib/dom';
-import type { CasesYear } from '../lib/types';
 import type { Palette } from '../map/palette';
 
 export type ColorMode = 'recency' | 'type';
 
 /**
- * One feature per statistical-area centroid. Properties:
+ * One feature per statistical-area centroid (feature id = point index in the set). Properties:
  *  l/i: local/imported counts, n: total, a: days from the latest onset to refISO,
- *  r: recency bucket (0 ≤7d … 3 >30d), k: 0 local only, 1 imported only, 2 both.
+ *  r: recency bucket (0 ≤7d … 3 >30d), k: 0 local only, 1 imported only, 2 both, e: latest onset (epoch day).
  */
-export function caseFeatures(file: CasesYear, agg: CaseAggregate, refISO: string, idBase = 0): GeoJSON.Feature<GeoJSON.Point>[] {
+export function caseFeatures(set: CaseSet, agg: CaseAggregate, refISO: string): GeoJSON.Feature<GeoJSON.Point>[] {
   const out: GeoJSON.Feature<GeoJSON.Point>[] = [];
+  const ref = epochDay(refISO);
   for (const [idx, [l, i]] of agg.byPt) {
-    const p = file.pts[idx]!;
-    const last = agg.lastDay.get(idx) ?? 1;
-    const a = Math.max(0, dayDiff(dateFromDoy(file.year, last), refISO));
+    const p = set.pts[idx]!;
+    const last = agg.lastDay.get(idx) ?? ref;
+    const a = Math.max(0, ref - last);
     out.push({
-      type: 'Feature', id: idBase + idx,
-      properties: { l, i, n: l + i, a, r: recencyBucket(a), k: l > 0 && i > 0 ? 2 : i > 0 ? 1 : 0, y: file.year, d: last },
+      type: 'Feature', id: idx,
+      properties: { l, i, n: l + i, a, r: recencyBucket(a), k: l > 0 && i > 0 ? 2 : i > 0 ? 1 : 0, e: last },
       geometry: { type: 'Point', coordinates: [p[0], p[1]] },
     });
   }
@@ -73,8 +73,8 @@ export interface CasePopupOpts {
 }
 export function casePopup(o: CasePopupOpts): HTMLElement {
   const pr = o.props;
-  const l = Number(pr.l) || 0, i = Number(pr.i) || 0, a = Number(pr.a) || 0, y = Number(pr.y), d = Number(pr.d);
-  const last = Number.isFinite(y) && Number.isFinite(d) ? dateFromDoy(y, d) : '';
+  const l = Number(pr.l) || 0, i = Number(pr.i) || 0, a = Number(pr.a) || 0, e = Number(pr.e);
+  const last = pr.e != null && Number.isFinite(e) ? isoFromEpochDay(e) : '';
   return h('div', { class: 'pop' },
     h('p', { class: 'pop-title' }, o.title),
     h('p', { class: 'pop-sub' }, t('map.popupPoint')),

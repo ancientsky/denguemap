@@ -40,6 +40,8 @@ export function locationRecords(year, imp, todayIso = '2026-10-14') {
     const day = 1 + ((i * 7 + year) % 27);
     let date = `${year}/${pad(month)}/${pad(day)}`;
     if (date.replaceAll('/', '-') > todayIso) date = `${year}/01/${pad(day)}`;
+    // early January: the current year only has the first few days (the backend never returns future onsets)
+    if (date.replaceAll('/', '-') > todayIso) date = todayIso.replaceAll('-', '/');
     const [lng, lat] = POINTS[(i + year) % POINTS.length];
     out.push({ sickdate: date, lat: String(lat + 0.0000004), lng: String(lng), count: 1 + (i % 2) });
   }
@@ -94,7 +96,8 @@ export async function startMockServer(opts = {}) {
     type: 'FeatureCollection', timestamp: '2026-10-11T20:00:02.534Z', features: vectorFeatures,
   };
   const ns1 = ns1Body();
-  const state = { fail, requests: /** @type {string[]} */ ([]), mutate: opts.mutate ?? null };
+  // todayIso can be changed between runs (e.g. to simulate a year rollover)
+  const state = { fail, requests: /** @type {string[]} */ ([]), mutate: opts.mutate ?? null, todayIso };
 
   const server = createServer((req, res) => {
     let raw = '';
@@ -114,7 +117,7 @@ export async function startMockServer(opts = {}) {
         let data = null;
         if (method === 'GetDengueLocation') {
           const y = Number(String(body.startDate).slice(0, 4));
-          data = body.immigration === '2' ? [] : locationRecords(y, Number(body.immigration), todayIso);
+          data = body.immigration === '2' ? [] : locationRecords(y, Number(body.immigration), state.todayIso);
         } else if (method === 'GetImportedData') data = IMPORTED_RECORDS;
         else if (method === 'GetIntEicdemic') data = body.countrycode === 'vn' ? NOTICE_RECORDS : [];
         else if (method === 'GetDengueCluster_New') {

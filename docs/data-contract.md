@@ -62,6 +62,8 @@ TopoJSON（由 taiwan-atlas `towns-10t.json` 精簡、量化），兩個 object�
 ```
 `c` 依 dayOfYear 遞增排序；同日同點同類別合併 count。
 
+**年度切換：**年份依臺灣日期決定。1 月 1 日（臺灣時間）起，當年的檔案一定存在並列入 `manifest.years`，尚無病例時為 `{"year": 2027, "pts": [], "c": []}`；此時 `manifest.latestOnset` 可能仍在前一年。新年度沒有歷史基準，`cases-shortfall` 警示與縮水檢查只對照前一版檔案。前端「動態地圖」可跨年讀取多個年度檔（依座標合併同一最小統計區）。
+
 ## trend.json
 
 ```jsonc
@@ -86,7 +88,7 @@ TopoJSON（由 taiwan-atlas `towns-10t.json` 精簡、量化），兩個 object�
   "last7": { "local": 0, "imported": 5 },
   "last14":{ "local": 1, "imported": 12 },
   "last30":{ "local": 3, "imported": 33 },
-  "prevYtd": { "local": 20, "imported": 160 },        // 去年同期（1/1 到去年同月同日）
+  "prevYtd": { "local": 20, "imported": 160 },        // 去年同期（1/1 到去年同月同日）；year 於 1/1 切換，ytd 可為 0，last7/14/30 跨年計算
   "byCounty": { "64000": { "local": 10, "imported": 32 } },   // 今年累計
   "topTowns14": [["64000090", 2, 0]],                 // 近 14 天 [townCode, local, imported]，依 local 遞減，最多 20
   "townNames": { "64000090": { "county": "64000", "countyZh": "高雄市", "countyEn": "Kaohsiung City", "zh": "前鎮區", "en": "Qianzhen District" } }

@@ -8,7 +8,8 @@
  * nothing is written and the process exits non-zero.
  *
  * Env: DENGUE_BASE_URL (default CDC host), TRAVEL_BASE_URL (safetravel raw files), DATA_OUT_DIR (default public/data),
- *      DATA_ALLOW_SHRINK=1 (skip the case-count shrink guard).
+ *      DATA_ALLOW_SHRINK=1 (skip the case-count shrink guard),
+ *      DATA_TODAY=YYYY-MM-DD (simulate another Taiwan calendar day, e.g. a year rollover; tests / debugging only).
  */
 import { appendFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -72,7 +73,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
  */
 export async function run(options = {}) {
   const log = options.log ?? ((m) => console.log(m));
-  const now = options.now ?? new Date();
+  const now = options.now ?? clockFromEnv(process.env.DATA_TODAY) ?? new Date();
   const outDir = options.outDir ?? process.env.DATA_OUT_DIR ?? join(ROOT, 'public/data');
   const baseUrl = options.baseUrl ?? process.env.DENGUE_BASE_URL ?? DEFAULT_BASE_URL;
   const allowShrink = options.allowShrink ?? process.env.DATA_ALLOW_SHRINK === '1';
@@ -273,6 +274,16 @@ export async function run(options = {}) {
   log(`done: ${changed.length} file(s) changed${changed.length ? ` (${changed.join(', ')})` : ''}`);
   await writeSummary(summaryPath, results, manifest, changed, prevManifest, todayIso);
   return { exitCode: 0, results, changed, manifest };
+}
+
+/**
+ * DATA_TODAY=YYYY-MM-DD → noon of that day in Taiwan (04:00 UTC); anything else → null (real clock).
+ * @param {string|undefined} v
+ */
+export function clockFromEnv(v) {
+  if (!v) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || !parseYmd(v)) throw new Error(`DATA_TODAY must be YYYY-MM-DD, got ${JSON.stringify(v)}`);
+  return new Date(`${v}T04:00:00Z`);
 }
 
 /** Compact, log-friendly view of a meta object (drops big arrays). */

@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { buildTravel, buildWorld } from './v2.mjs';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
@@ -24,7 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
 const outArg = argv.indexOf('--out');
 const V2_MISSING = argv.includes('--v2-missing');
-const OUT = V2_MISSING ? join(ROOT, 'public', 'data') : outArg >= 0 ? join(process.cwd(), argv[outArg + 1]) : join(ROOT, '.fixtures', 'data');
+const OUT = V2_MISSING ? join(ROOT, 'public', 'data') : outArg >= 0 ? resolve(process.cwd(), argv[outArg + 1]) : join(ROOT, '.fixtures', 'data');
 const SAFETRAVEL = process.env.SAFETRAVEL_DATA || '/home/user/ancientsky/safetravel/web/data';
 const TODAY = process.env.FIXTURE_TODAY || '2026-10-16';
 const LATEST_ONSET = addDays(TODAY, -2);
@@ -228,20 +228,29 @@ const yearSpecs = {
       { county: C.KHH, towns: [['鼓山區', 2], ['三民區', 2], ['苓雅區', 1]], n: 140, peak: 262, sd: 22, poolScale: 8 },
       { county: C.TNN, towns: [['安南區', 1]], n: 25, peak: 280, sd: 15, poolScale: 4 },
     ], imported: { n: 231, sporadicLocal: 20 }, maxDoy: 366 },
-  [TODAY_YEAR]: { outbreaks: [
-      { county: C.TNN, towns: [['東區', 3], ['北區', 2], ['永康區', 2], ['中西區', 1]], n: 120, peak: doyOf(LATEST_ONSET) - 32, sd: 18, poolScale: 10 },
-      { county: C.KHH, towns: [['前鎮區', 3], ['苓雅區', 2], ['鳳山區', 2], ['小港區', 1]], n: 150, peak: doyOf(LATEST_ONSET) - 22, sd: 16, poolScale: 10 },
-      { county: C.PIF, towns: [['屏東市', 2], ['東港鎮', 1]], n: 48, peak: doyOf(LATEST_ONSET) - 14, sd: 10, poolScale: 6 },
-    ], imported: { n: 185, sporadicLocal: 12 }, maxDoy: doyOf(LATEST_ONSET) },
 };
+// Current year: an autumn season up to the latest onset; early in January only a handful of cases
+// (FIXTURE_TODAY=2027-01-03 simulates the year rollover).
+const latestDoy = Number(LATEST_ONSET.slice(0, 4)) === TODAY_YEAR ? doyOf(LATEST_ONSET) : 0;
+yearSpecs[TODAY_YEAR] = latestDoy >= 90 ? { outbreaks: [
+    { county: C.TNN, towns: [['東區', 3], ['北區', 2], ['永康區', 2], ['中西區', 1]], n: 120, peak: latestDoy - 32, sd: 18, poolScale: 10 },
+    { county: C.KHH, towns: [['前鎮區', 3], ['苓雅區', 2], ['鳳山區', 2], ['小港區', 1]], n: 150, peak: latestDoy - 22, sd: 16, poolScale: 10 },
+    { county: C.PIF, towns: [['屏東市', 2], ['東港鎮', 1]], n: 48, peak: latestDoy - 14, sd: 10, poolScale: 6 },
+  ], imported: { n: 185, sporadicLocal: 12 }, maxDoy: latestDoy }
+  : { outbreaks: latestDoy ? [{ county: C.KHH, towns: [['前鎮區', 1]], n: 3, peak: latestDoy, sd: 1, poolScale: 2 }] : [], imported: { n: latestDoy ? 2 : 0 }, maxDoy: Math.max(1, latestDoy) };
+// The previous year when it has no hand-written spec (rollover simulations): a late-autumn season.
+yearSpecs[TODAY_YEAR - 1] ??= { outbreaks: [
+    { county: C.KHH, towns: [['前鎮區', 3], ['苓雅區', 2], ['鳳山區', 2]], n: 260, peak: 320, sd: 25, poolScale: 10 },
+    { county: C.TNN, towns: [['東區', 2], ['北區', 1]], n: 90, peak: 335, sd: 20, poolScale: 8 },
+  ], imported: { n: 190, sporadicLocal: 12 }, maxDoy: 366 };
 
 const generated = {};
 for (const [y, spec] of Object.entries(yearSpecs)) {
   const year = Number(y);
   generated[year] = buildYear(year, spec);
   // ensure the latest onset day actually has a case in the current year
-  if (year === TODAY_YEAR) {
-    const f = generated[year].file; const d = doyOf(LATEST_ONSET);
+  if (year === TODAY_YEAR && latestDoy) {
+    const f = generated[year].file; const d = latestDoy;
     if (!f.c.some((r) => r[0] === d)) {
       const t = findTown(C.KHH, '前鎮區'); const idx = f.pts.length; f.pts.push([...randomPointIn(t), t.code]);
       f.c.push([d, idx, 0, 1]); generated[year].caseList.push([d, t.code, 0]);
