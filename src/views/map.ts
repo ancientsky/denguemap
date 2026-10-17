@@ -7,7 +7,8 @@ import { loadAdmin, type Admin } from '../lib/admin';
 import { aggregateCases, dailyCounts, niceBreaks, topEntries, type CaseAggregate } from '../lib/aggregate';
 import { loadData, DataError } from '../lib/data';
 import { dateFromDoy, dayDiff, recencyRef } from '../lib/dates';
-import { clear, h, rafThrottle } from '../lib/dom';
+import { clear, extLink, h, rafThrottle } from '../lib/dom';
+import { directionsUrl } from '../lib/directions';
 import { TAIWAN_BOUNDS } from '../lib/geo';
 import { icon } from '../lib/icons';
 import { maxDoyFor, normalizeMapParams, serializeMapParams, type CaseType, type MapCtx, type MapMode, type MapParams } from '../lib/params';
@@ -280,9 +281,11 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     } else if (layer === L.ns1 && ns1Data) {
       const r = ns1Data.h[Number(pr.i)];
       if (!r) return;
+      const nav = directionsUrl(r[1], r[3], r[4]);
       content = h('div', { class: 'pop' }, h('p', { class: 'pop-kicker' }, icon('hospital'), t('map.hospital')), h('p', { class: 'pop-title' }, r[0]),
-        h('dl', { class: 'pop-dl' }, h('dt', null, t('map.hospitalAddr')), h('dd', null, r[1] || '—'), h('dt', null, t('map.hospitalTel')),
-          h('dd', null, r[2] && /^[\d\-#() ]{6,20}$/.test(r[2]) ? h('a', { href: `tel:${r[2].replace(/[^\d#]/g, '')}` }, r[2]) : r[2] || '—')));
+        h('dl', { class: 'pop-dl' }, h('dt', null, t('map.hospitalAddr')), h('dd', null, nav ? extLink(nav, r[1] || t('map.navigate')) : r[1] || '—'), h('dt', null, t('map.hospitalTel')),
+          h('dd', null, r[2] && /^[\d\-#() ]{6,20}$/.test(r[2]) ? h('a', { href: `tel:${r[2].replace(/[^\d#]/g, '')}` }, r[2]) : r[2] || '—')),
+        nav ? extLink(nav, t('map.navigate'), 'pop-action') : null);
       host.showPopup([r[3], r[4]], content, hover);
     }
   };

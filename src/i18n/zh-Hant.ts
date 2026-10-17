@@ -272,6 +272,7 @@ export const zhHant = {
   'vector.breteauShort': '布氏級數',
   'vector.ovitrapShort': '誘卵桶陽性率',
   'vector.gravitrapShort': '誘殺桶陽性率',
+  'map.navigate': '導航（Google 地圖）',
   'map.ns1Cluster': '{n} 家 NS1 院所（點擊放大）',
   'imported.advAll': '所有疾病',
   'imported.advAllNote': '顯示各國所有疾病（含全球性建議）中的最高旅遊疫情建議等級。',

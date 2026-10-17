@@ -274,6 +274,7 @@ export const en: Dictionary = {
   'vector.breteauShort': 'Breteau',
   'vector.ovitrapShort': 'Ovitrap',
   'vector.gravitrapShort': 'Gravitrap',
+  'map.navigate': 'Directions (Google Maps)',
   'map.ns1Cluster': '{n} NS1 clinics (click to zoom in)',
   'imported.advAll': 'All diseases',
   'imported.advAllNote': 'Highest travel advisory level among all diseases (incl. global advisories).',
