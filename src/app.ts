@@ -244,6 +244,9 @@ export class App {
     this.host?.setOverlay(null);
     this.host?.hidePopup();
     clear(this.viewRoot);
+    // data-view-ready names the route whose view has finished mounting (read by the smoke test); unlike
+    // data-ready it is cleared on every navigation, so a stale value can't pass for the new view.
+    delete document.body.dataset.viewReady;
     const isMap = MAP_ROUTES.has(this.route);
     document.body.dataset.route = this.route;
     document.body.dataset.layout = isMap ? 'map' : 'page';
@@ -264,6 +267,7 @@ export class App {
       this.view = v;
       if (routeChanged && !isMap) window.scrollTo(0, 0);
       document.body.dataset.ready = '1';
+      document.body.dataset.viewReady = this.route;
     } catch (e) {
       if (token !== this.navToken) return;
       console.warn(e);

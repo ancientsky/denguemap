@@ -124,6 +124,11 @@ async function mapReady(frame, label) {
     .catch(() => failures.push(`[${label}] map did not become idle`));
 }
 
+/** Wait until the router has mounted `route`'s view. data-view-ready is cleared on every navigation (data-ready is not). */
+function viewReady(frame, route) {
+  return frame.waitForFunction((r) => document.body.dataset.viewReady === r, route, { timeout: 20000 });
+}
+
 /** Everything the embed UI promises, read from the page in one round-trip. */
 function embedFacts() {
   const shown = (sel) => {
@@ -241,26 +246,32 @@ async function embedPass() {
     try {
       label = 'embed-hash-params';
       await page.goto(`${BASE}#/map?embed=1&theme=dark&lang=en`, { waitUntil: 'load' });
+      await viewReady(page, 'map').catch(() => failures.push(`[${label}] map view did not mount`));
       await mapReady(page, label);
       const f0 = await page.evaluate(embedFacts);
       checkEmbedFacts(f0, { route: 'map', lang, theme, device: 'desktop', label, expectPanelOpen: true });
       await page.check('input.seg-input[value="all"]');
-      await page.waitForTimeout(500);
+      await page.waitForFunction(() => /[?&]type=all(&|$)/.test(location.hash), null, { timeout: 10000 }).catch(() => {}); // asserted below
       const h1 = new URLSearchParams(await page.evaluate(() => location.hash.slice(location.hash.indexOf('?') + 1)));
       for (const [k, v] of [['embed', '1'], ['theme', 'dark'], ['lang', 'en'], ['type', 'all']]) if (h1.get(k) !== v) failures.push(`[${label}] hash lost ${k}=${v} after a control change: ${page.url()}`);
       const href1 = await page.getAttribute('.embed-open', 'href');
       if (!/type=all/.test(href1) || /embed/.test(href1)) failures.push(`[${label}] open link does not follow the state: ${href1}`);
       await page.evaluate(() => { delete document.body.dataset.mapIdle; location.hash = '#/vector'; }); // what an in-frame link click does
-      await page.waitForFunction(() => document.body.dataset.route === 'vector' && /embed=1/.test(location.hash), null, { timeout: 10000 })
+      await page.waitForFunction(() => document.body.dataset.viewReady === 'vector' && /embed=1/.test(location.hash), null, { timeout: 20000 })
         .catch(() => failures.push(`[${label}] embed params not restored after in-frame navigation: ${page.url()}`));
       await mapReady(page, label);
       const hash2 = await page.evaluate(() => location.hash);
       if (!/theme=dark/.test(hash2) || !/lang=en/.test(hash2)) failures.push(`[${label}] theme/lang dropped from hash: ${hash2}`);
       if (!/#\/vector/.test(await page.getAttribute('.embed-open', 'href'))) failures.push(`[${label}] open link did not follow the view`);
-      // a hostile hash is not reflected anywhere
+      // a hostile hash is not reflected anywhere. Start from a fresh, fully mounted document on another route:
+      // a view still mounting from the steps above rewrites the hash on mount and can clobber the navigation.
+      await page.goto(`${BASE}#/vector?embed=1&theme=dark&lang=en`, { waitUntil: 'load' });
+      await page.reload({ waitUntil: 'load' });
+      await viewReady(page, 'vector').catch(() => failures.push(`[${label}] vector view did not mount after reload`));
+      await mapReady(page, label);
       await page.evaluate(() => { delete document.body.dataset.mapIdle; location.hash = '#/map?embed=1&theme=%3Cimg%20src%3Dx%3E&lang=%22%3E%3Cb%3E&year=%3Cb%3E'; });
-      await page.waitForFunction(() => document.body.dataset.route === 'map', null, { timeout: 10000 })
-        .catch(async () => failures.push(`[${label}] hostile hash did not route to map: ${JSON.stringify(await page.evaluate(() => [document.body.dataset.route, location.hash]))}`));
+      await page.waitForFunction(() => document.body.dataset.route === 'map' && document.body.dataset.viewReady === 'map', null, { timeout: 20000 })
+        .catch(async () => failures.push(`[${label}] hostile hash did not route to map: ${JSON.stringify(await page.evaluate(() => [document.body.dataset.route, document.body.dataset.viewReady, location.hash]))}`));
       await mapReady(page, label);
       const hostile = await page.evaluate(() => ({ hash: location.hash, html: document.documentElement.outerHTML.includes('<img src=x') }));
       if (/img|%3C|%22/i.test(hostile.hash) || hostile.html) failures.push(`[${label}] hostile param reflected: ${hostile.hash}`);
