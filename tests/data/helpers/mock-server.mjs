@@ -86,7 +86,7 @@ function ns1Body() {
 }
 
 /**
- * @param {{travelAlerts?: any, travelEpidemics?: any, todayIso?: string, fail?: Set<string>, mutate?: (method:string, body:any, data:any)=>any, nsAsLiteral?: boolean}} [opts]
+ * @param {{travelAlerts?: any, travelEpidemics?: any, todayIso?: string, fail?: Set<string>, mutate?: (method:string, body:any, data:any, ctx:{instance:string|null, n:number})=>any, instanceFor?: (n:number, req:{connection:string})=>string|null, nsAsLiteral?: boolean}} [opts]
  */
 export async function startMockServer(opts = {}) {
   const todayIso = opts.todayIso ?? '2026-10-14';
@@ -97,7 +97,12 @@ export async function startMockServer(opts = {}) {
   };
   const ns1 = ns1Body();
   // todayIso can be changed between runs (e.g. to simulate a year rollover)
-  const state = { fail, requests: /** @type {string[]} */ ([]), mutate: opts.mutate ?? null, todayIso };
+  // `calls`: every asmx POST (body, cookie sent, instance that answered); `instanceFor(n)`: ARRAffinity value of the n-th asmx call
+  const state = {
+    fail, requests: /** @type {string[]} */ ([]), mutate: opts.mutate ?? null, todayIso,
+    calls: /** @type {Array<{method:string, body:any, cookie:string, instance:string|null, connection:string}>} */ ([]),
+    instanceFor: opts.instanceFor ?? null,
+  };
 
   const server = createServer((req, res) => {
     let raw = '';
@@ -105,8 +110,9 @@ export async function startMockServer(opts = {}) {
     req.on('end', () => {
       const path = decodeURIComponent(req.url ?? '');
       state.requests.push(`${req.method} ${path}`);
+      let setCookie = /** @type {string[]|null} */ (null);
       const send = (status, body, type = 'application/json') => {
-        res.writeHead(status, { 'Content-Type': type });
+        res.writeHead(status, { 'Content-Type': type, ...(setCookie ? { 'Set-Cookie': setCookie } : {}) });
         res.end(body);
       };
       if ([...state.fail].some((f) => path.includes(f))) return send(500, '{"Message":"There was an error processing the request."}');
@@ -114,6 +120,12 @@ export async function startMockServer(opts = {}) {
         const method = path.split('/').pop();
         let body = {};
         try { body = raw ? JSON.parse(raw) : {}; } catch { return send(400, '{}'); }
+        const cookie = String(req.headers.cookie ?? '');
+        const n = state.calls.length;
+        const pinned = /ARRAffinity=([^;]+)/.exec(cookie)?.[1] ?? null;
+        const instance = pinned ?? state.instanceFor?.(n, { connection: String(req.headers.connection ?? '') }) ?? null;
+        state.calls.push({ method: String(method), body, cookie, instance, connection: String(req.headers.connection ?? '') });
+        if (instance) setCookie = [`ARRAffinity=${instance}; Path=/; HttpOnly; Secure`, `ARRAffinitySameSite=${instance}; Path=/; HttpOnly; SameSite=None; Secure`];
         let data = null;
         if (method === 'GetDengueLocation') {
           const y = Number(String(body.startDate).slice(0, 4));
@@ -124,7 +136,7 @@ export async function startMockServer(opts = {}) {
           data = body.citycode === '32' ? { type: 'FeatureCollection', features: [CLUSTER_FEATURE] }
             : ['01', '03', '05', '07', '11', '12', '22', '31', '33', '35', '37', '38', '39', '40', '43'].includes(body.citycode) ? { type: 'FeatureCollection', features: [] } : null;
         } else return send(404, '{}');
-        if (state.mutate) data = state.mutate(method, body, data);
+        if (state.mutate) data = state.mutate(method, body, data, { instance, n });
         return send(200, JSON.stringify({ d: data === null ? null : JSON.stringify(data) }));
       }
       if (req.method === 'GET' && path === '/travel/alerts.json') return send(200, JSON.stringify(opts.travelAlerts ?? travelAlerts()));

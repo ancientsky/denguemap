@@ -84,7 +84,7 @@ export async function hashFiles(dir) {
  * @param {object} p
  * @param {Date} p.now
  * @param {any|null} p.prev previous manifest
- * @param {Record<string, {ok:true, extra?:Record<string,unknown>, records:number}|{ok:false}>} p.sources
+ * @param {Record<string, {ok:true, extra?:Record<string,unknown>, records:number}|{ok:false, extra?:Record<string,unknown>}>} p.sources
  * @param {string} p.latestOnset
  * @param {string[]} p.years
  * @param {Record<string,string>} p.files
@@ -101,9 +101,10 @@ export function buildManifest({ now, prev, sources, latestOnset, years, files, w
       out[name] = { ok: true, stale: false, fetchedAt: nowIso, records: s.records, ...(s.extra ?? {}) };
     } else if (old && typeof old === 'object') {
       // keep the old facts (fetchedAt, records, ...) but flag the failure
-      out[name] = { ...old, ok: false, stale: true };
+      // (`extra` of a failed source: per-year facts that still changed, e.g. keptYears)
+      out[name] = { ...old, ok: false, stale: true, ...(s?.extra ?? {}) };
     } else {
-      out[name] = { ok: false, stale: false, fetchedAt: null, records: 0 };
+      out[name] = { ok: false, stale: false, fetchedAt: null, records: 0, ...(s?.extra ?? {}) };
     }
   }
   return {
@@ -118,7 +119,8 @@ export function buildManifest({ now, prev, sources, latestOnset, years, files, w
 }
 
 /**
- * Rewrite the manifest only when a data file hash, the warnings or a source ok/stale flag changed.
+ * Rewrite the manifest only when a data file hash, the warnings, a source ok/stale flag or its keptYears /
+ * yearsFetchedAt changed.
  * @param {any|null} prev @param {any} next
  */
 export function manifestChanged(prev, next) {
@@ -128,9 +130,33 @@ export function manifestChanged(prev, next) {
   for (const name of SOURCE_NAMES) {
     const a = prev.sources?.[name], b = next.sources[name];
     if (!a || a.ok !== b.ok || a.stale !== b.stale) return true;
+    // per-year facts of cases / imported (only move on a status change or a data change, so they do not churn)
+    if (JSON.stringify(a.keptYears ?? []) !== JSON.stringify(b.keptYears ?? [])) return true;
+    if (JSON.stringify(a.yearsFetchedAt ?? null) !== JSON.stringify(b.yearsFetchedAt ?? null)) return true;
   }
   return false;
 }
 
 /** @param {any} manifest */
 export const manifestToJson = (manifest) => toJson(manifest);
+
+/**
+ * `yearsFetchedAt` of a cases / imported source.  A year's time moves only when its data changed or it
+ * returns from "kept" (so an unchanged re-fetch never rewrites the manifest).
+ * @param {any|null} prevEntry previous manifest entry of the source
+ * @param {string} nowIso
+ * @param {{acceptedYears:number[], changedYears:number[]}} meta
+ * @returns {Record<string,string>}
+ */
+export function nextYearsFetchedAt(prevEntry, nowIso, meta) {
+  /** @type {Record<string,string>} */
+  const prev = prevEntry?.yearsFetchedAt && typeof prevEntry.yearsFetchedAt === 'object' ? prevEntry.yearsFetchedAt : {};
+  const wasKept = new Set((prevEntry?.keptYears ?? []).map(String));
+  /** @type {Record<string,string>} */
+  const out = { ...prev };
+  for (const y of meta.acceptedYears) {
+    const k = String(y);
+    if (!(k in prev) || wasKept.has(k) || meta.changedYears.includes(y)) out[k] = nowIso;
+  }
+  return Object.fromEntries(Object.entries(out).sort((a, b) => cmp(a[0], b[0])));
+}

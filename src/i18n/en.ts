@@ -252,6 +252,8 @@ export const en: Dictionary = {
   'warn.importedShortfallYear': 'Source data incomplete: {year} countries-of-infection data show {got} of ~{expected} imported cases. See Taiwan CDC for official figures.',
   'warn.importedShortfallAll': 'Source data incomplete: countries-of-infection data show {got} of ~{expected} imported cases. See Taiwan CDC for official figures.',
   'warn.generic': 'Data quality warning ({code}): {got} / {expected}',
+  'warn.keptYear': '{year} data is the complete version fetched {date} (the Taiwan CDC source returned incomplete data this time, so it was kept).',
+  'warn.keptYearNoDate': '{year} data is a previously fetched complete version (the Taiwan CDC source returned incomplete data this time, so it was kept).',
   'warn.typeLocal': 'local',
   'warn.typeImported': 'imported',
   'warn.prevIncomplete': 'Last year’s source data is incomplete, so no comparison is shown.',

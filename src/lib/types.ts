@@ -10,6 +10,10 @@ export interface SourceStatus {
   sourceDate?: string;
   /** travel: SafeTravel generated_at */
   updated?: string;
+  /** cases/imported: years whose data was kept from an earlier run because upstream returned less (contract v3). */
+  keptYears?: number[];
+  /** cases/imported: last successful fetch per year (ISO), keyed by 'YYYY'. */
+  yearsFetchedAt?: Record<string, string>;
 }
 
 /** Data-quality warning from the pipeline, e.g. upstream lost most records of a year. */

@@ -43,7 +43,7 @@ DATA_TODAY=2027-01-03 DATA_OUT_DIR=/tmp/x npm run data   # 模擬其他日期（
 
 年度切換不需改程式：管線依臺灣日期決定年份，1 月 1 日起就會產生新年度的 `cases/{year}.json`（尚無病例時為空檔）並列入 `manifest.years`；前端的期間都相對於「今天」計算（測試：`tests/data/rollover.e2e.test.mjs`、`tests/unit/period.test.ts`、`SMOKE_PASSES=period`）。
 
-手動更新資料：Actions → `data` → Run workflow（`allow_shrink` 只在疾管署正式下修數字後使用）。
+手動更新資料：Actions → `data` → Run workflow（`allow_shrink` 只在疾管署正式下修數字後使用；`full` 會連凍結年份一起重抓驗證，每週日 03:41 也會自動跑一次）。
 
 ## 資料與免責
 

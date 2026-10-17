@@ -56,9 +56,17 @@ describe('year rollover: 2027-01-03 (Taiwan)', () => {
       const before = { trend: await readIn(dir, 'trend.json'), manifest: await readIn(dir, 'manifest.json') };
       expect(before.manifest.years.at(-1)).toBe(2026);
       server.state.todayIso = '2027-01-03';
+      server.state.calls.length = 0;
+      const before2025 = await readFile(join(dir, 'cases/2025.json'), 'utf8');
       const r = await run({ ...common(dir), now: JAN3 });
       expect(r.exitCode).toBe(0);
       expect(r.results.cases.ok).toBe(true);
+      // year rollover freezes 2025: only 2026 and 2027 are active (13+ months of data in January), 2025 is reused as it is
+      const asked = server.state.calls.filter((c) => c.method === 'GetDengueLocation').map((c) => Number(c.body.startDate.slice(0, 4)));
+      expect([...new Set(asked)].sort()).toEqual([2026, 2027]);
+      expect(asked).toHaveLength(4);
+      expect(await readFile(join(dir, 'cases/2025.json'), 'utf8')).toBe(before2025);
+      expect(r.results.cases.meta).toMatchObject({ fetchedYears: [2026, 2027], keptYears: [] });
       expect(r.results.cases.meta.years).toEqual(Array.from({ length: 30 }, (_, i) => 1998 + i));
 
       const m = await readIn(dir, 'manifest.json');

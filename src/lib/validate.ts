@@ -57,6 +57,12 @@ export function validateManifest(v: unknown): Manifest {
       if (isISODate(s.periodEnd)) st.periodEnd = s.periodEnd;
       if (isISODate(s.sourceDate)) st.sourceDate = s.sourceDate;
       if (typeof s.updated === 'string' && !Number.isNaN(Date.parse(s.updated))) st.updated = s.updated;
+      if (Array.isArray(s.keptYears)) st.keptYears = [...new Set(s.keptYears.filter((y): y is number => isInt(y) && y >= 1990 && y <= 2100))].slice(0, 60).sort((a, b) => a - b);
+      if (isObj(s.yearsFetchedAt)) {
+        const yf: Record<string, string> = {};
+        for (const [y, at] of Object.entries(s.yearsFetchedAt).slice(0, 60)) if (/^\d{4}$/.test(y) && typeof at === 'string' && !Number.isNaN(Date.parse(at))) yf[y] = at;
+        st.yearsFetchedAt = yf;
+      }
       sources[k] = st;
     }
   }

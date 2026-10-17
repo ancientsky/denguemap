@@ -22,8 +22,8 @@ import { addCountBadge, addNs1Icon, addRiskSquares } from '../map/images';
 import { caseFeatures, casePaint, casePopup, caseSortKey, recencyLegend, type ColorMode } from './caseLayer';
 import { dualRange } from './range';
 import type { View, ViewContext } from './types';
-import { kpis, legendItem, loadingBlock, notice, panel, section, segmented, select, toggle, warningText, type KpiSpec } from './ui';
-import { casesShortfalls } from '../lib/warnings';
+import { keptYearText, kpis, legendItem, loadingBlock, notice, panel, section, segmented, select, toggle, warningText, type KpiSpec } from './ui';
+import { casesShortfalls, keptYears } from '../lib/warnings';
 
 const L = {
   townsFill: 'dm-towns-fill', townsLine: 'dm-towns-line', heat: 'dm-heat', pts: 'dm-pts', focus: 'dm-county-focus',
@@ -334,7 +334,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   function renderWarnings(): void {
     clear(warnBox);
     const ys = yearsTouched(st.period.start, st.period.end, manifest!.years);
-    const n = notice(ys.flatMap((y) => casesShortfalls(manifest!.warnings, y, st.type)).map(warningText));
+    const n = notice([...ys.flatMap((y) => casesShortfalls(manifest!.warnings, y, st.type)).map(warningText), ...keptYears(manifest, 'cases', ys).map(keptYearText)]);
     if (n) warnBox.append(n);
   }
   const legend = h('ul', { class: 'legend', 'aria-label': t('common.legend') });

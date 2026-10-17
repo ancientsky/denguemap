@@ -29,7 +29,7 @@ JSON 一律 UTF-8、無縮排（minified）。
   "files": { "summary.json": "a1b2c3d4", "cases/2026.json": "…" }   // 內容 sha256 前 8 碼，前端用作 ?v= 快取鍵
 }
 ```
-**來源狀態（`sources.*`）**
+**來源狀態（`sources.*`）**（`cases`／`imported` 的 `ok`／`stale` 只指「當年」，並多了 `keptYears`／`yearsFetchedAt`，見文末「v3 增補」）
 
 | `ok` | `stale` | 意義 |
 |---|---|---|
@@ -207,3 +207,36 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 - `travel.news` 的 2 年視窗以台灣日期 `today` 往前 730 天計；`d` 順序固定為 dengue, chikungunya, zika, yellowFever, malaria, japaneseEncephalitis, westNile。
 - 驗證：有效國家 < 150 或缺任一 `levels` 即視為來源失敗（保留前一版 `travel.json`，manifest 標 `stale`）。安全上限：單一檔案 8 MB。環境變數 `TRAVEL_BASE_URL` 可覆寫來源路徑。
 - `geo/world.topo.json` 每次執行都從 `world-atlas`（countries-50m）離線重建（約 0.5 秒，位元組穩定，無變動即不寫檔）；不屬於 manifest 的 `sources`。
+
+---
+
+## v3 增補（2026-10-17）：逐年接受、凍結歷史、manifest 逐年欄位
+
+上游（疾管署後端）會間歇地只回傳 2023–2025 被截斷的歷史（2026 與 ≤2022 一直完整，數分鐘到數小時後恢復）。管線因此改為「逐年獨立接受」：
+
+- **作用中年份（ACTIVE）** = 台灣當年與前一年（一月時涵蓋 ≥13 個月）。排程的一般執行只抓這兩年（4 次 `GetDengueLocation`：每年 × 本土／境外）。**凍結年份**（≤ 當年−2）沿用已提交的 `cases/{year}.json`，不抓取；檔案不存在或損毀時才補抓（bootstrap）。跨年（台灣 01-01）時前年自動變為凍結。
+- **每週完整驗證（full）**：`DATA_FULL=1`、workflow_dispatch 的布林輸入 `full`、或每週日 03:41（台灣；cron `41 19 * * 6`）。抓全部年份（58 次）；凍結年份只在新的總數 ≥ 已提交總數 − 容許量時才取代（成長或極小修正），否則沿用並記錄。
+- **接受規則**（每個 `(年, 本土|境外)` 各自判斷）：新總數 ≥ 已提交檔案的總數 − 容許量（`max(5, 2%)`；該年沒有已提交檔案時對照固定的 REFERENCE_COUNTS）。被拒的組合沿用已提交檔案中該類型的資料（兩類都被拒則整檔沿用），並只重抓被拒的組合（預設等 90 秒、再等 180 秒，最多再試 2 次）。抓取失敗（HTTP 錯誤）的組合同樣沿用，不重試。`DATA_ALLOW_SHRINK=1` 略過。
+- 該年沒有已提交檔案卻被拒 → 整個 `cases` 來源失敗（無從沿用）。
+- `trend.json`／`summary.json` 每次由「新抓到的列 + 沿用年份由已提交的 `cases/{year}.json` 還原的列」重建（還原是 `buildYearFile` 的反函數，位元組一致）。**當年未被接受時不更新** `trend.json`／`summary.json`（其他被接受的年份檔仍會寫入）。
+- `imported.json`（`GetImportedData` 一次回傳全部）逐「發病年」合併：該年事件數 ≥ 已提交 − 容許量就採用新事件，否則沿用已提交 `events` 中該年的事件；`countries`／`byYear`／`byMonth`／`from`／`to` 由合併後的事件重建（有沿用年份時國名與座標維持已提交值，避免來回跳動）。被拒的年份會重抓整個呼叫（最多再 2 次）。已提交檔案若是 v2 之前的（沒有 `events`），無法沿用任何年份，被拒時整個來源失敗。
+
+### manifest：`sources.cases`／`sources.imported` 新增欄位
+
+```jsonc
+"cases": {
+  "ok": true, "stale": false,            // 現在只指「當年」：當年被接受即 ok:true，即使較舊年份被沿用
+  "fetchedAt": "2026-10-17T00:28:59Z",    // 當年成功抓取的時間
+  "records": 105233,
+  "keptYears": [2025],                    // 這次沿用上一版資料的年份（含只沿用了其中一類的年份）；沒有時 []
+  "yearsFetchedAt": { "2025": "…Z", "2026": "…Z" }   // 各年最後一次「資料有變」或「由沿用恢復」的時間
+}
+```
+- `ok:false, stale:true`：當年被拒（或整個來源失敗）；`fetchedAt`／`records` 維持上一版值，但 `keptYears`／`yearsFetchedAt` 反映這次的狀況（較舊年份仍可能已更新）。`keptYears` 此時含當年。
+- `yearsFetchedAt[year]` 只在 (a) 該年檔案內容改變、(b) 該年由 `keptYears` 恢復、(c) 該年原本沒有記錄 時才更新；內容沒變的成功重抓不改動它，因此 manifest 不會每次都重寫。至少涵蓋作用中年份；凍結年份在第一次被抓（bootstrap 或 full）後出現。
+- manifest 在「檔案雜湊、`warnings`、`ok`／`stale`、`keptYears` 或 `yearsFetchedAt` 任一改變」時才重寫。
+- `warnings`（cases-shortfall／imported-shortfall）仍以已提交的檔案對照 REFERENCE 計算。
+
+### 診斷（不入庫）
+
+每個 asmx 請求都記錄狀態碼、耗時、位元組、回應 `Date`、`Server`／`X-Powered-By`，以及 `ARRAffinity` cookie 值的 8 碼雜湊（絕不輸出 cookie 本身）。任何年份被拒時執行一次探測：對被截斷的一年再發 4 次本土 `GetDengueLocation`（每次新連線 `Connection: close`、不帶 cookie、間隔 5 秒），外加每個已見過的實例各 1 次（帶回該實例的 cookie，最多 4 個），並把表格（attempt／instance／year／records／cases／truncated）與一句結論（「truncation correlates with instance X」／「all instances truncated → data-state issue upstream」／…）以及一行 JSON 健康紀錄寫入 `$GITHUB_STEP_SUMMARY`。這些資訊不寫入 repo。

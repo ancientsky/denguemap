@@ -250,6 +250,8 @@ export const zhHant = {
   'warn.importedShortfallYear': '來源資料不完整：{year} 年境外移入感染國資料僅 {got} 例（應約 {expected} 例）。正式數字以疾管署公布為準。',
   'warn.importedShortfallAll': '來源資料不完整：境外移入感染國資料僅 {got} 例（應約 {expected} 例）。正式數字以疾管署公布為準。',
   'warn.generic': '資料品質警示（{code}）：{got} / {expected}',
+  'warn.keptYear': '{year} 年資料暫時沿用 {date} 取得的完整版本（疾管署來源這次回傳的資料不完整，已自動保留）。',
+  'warn.keptYearNoDate': '{year} 年資料暫時沿用先前取得的完整版本（疾管署來源這次回傳的資料不完整，已自動保留）。',
   'warn.typeLocal': '本土',
   'warn.typeImported': '境外移入',
   'warn.prevIncomplete': '去年同期的來源資料不完整，不提供比較。',

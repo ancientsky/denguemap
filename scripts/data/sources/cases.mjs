@@ -4,10 +4,13 @@
  * local/imported flag, aggregated into cases/{year}.json + trend.json +
  * summary.json.
  */
-import { BBOX, CONCURRENCY, FIRST_YEAR } from '../config.mjs';
 import {
-  cmp, dayOfYear, daysFromIso, daysFromYmd, mapLimit, parseYmd, round5, sameDayLastYear, toJson, ymd,
+  ACTIVE_YEAR_SPAN, BBOX, CONCURRENCY, FIRST_YEAR, REFERENCE_COUNTS,
+} from '../config.mjs';
+import {
+  cmp, dayOfYear, daysFromIso, daysFromYmd, isoFromDays, mapLimit, parseYmd, round5, sameDayLastYear, toJson, ymd,
 } from '../util.mjs';
+import { shrinksBelow } from '../validate.mjs';
 
 /**
  * @typedef {{county:string, countyZh:string, countyEn:string, zh:string, en:string}} TownName
@@ -259,49 +262,215 @@ export function buildCasesOutputs(rowsByYear, locateTown, todayIso, townName) {
 }
 
 /**
- * Fetch every year x flag and build the outputs.
- * @param {import('../run.mjs').Ctx} ctx
+ * Rebuild the (aggregated) rows of a committed cases/{year}.json: the inverse of buildYearFile.
+ * @param {any} file parsed cases/{year}.json
+ * @returns {CaseRow[]}
  */
-export async function buildCases(ctx) {
+export function rowsFromYearFile(file) {
+  /** @type {CaseRow[]} */
+  const rows = [];
+  const jan1 = daysFromYmd(file.year, 1, 1);
+  for (const r of file.c) {
+    const pt = file.pts[r[1]];
+    if (!pt) continue;
+    rows.push({
+      date: isoFromDays(jan1 + r[0] - 1), doy: r[0], lng: pt[0], lat: pt[1], imp: r[2] === 1 ? 1 : 0, count: r[3],
+    });
+  }
+  return rows;
+}
+
+const sumCounts = (/** @type {CaseRow[]} */ rows) => rows.reduce((a, r) => a + r.count, 0);
+
+/**
+ * Years that are fetched on a normal run: the current year and the one before.
+ * @param {number} currentYear
+ */
+export const isActiveYear = (currentYear, /** @type {number} */ y) => y > currentYear - ACTIVE_YEAR_SPAN;
+
+/**
+ * @typedef {object} CasesOptions
+ * @property {boolean} [full]          fetch (and verify) every year, not only the active ones
+ * @property {boolean} [allowShrink]   accept lower counts (DATA_ALLOW_SHRINK)
+ * @property {{local:readonly number[], imported:readonly number[]}|null} [reference]  floor for years without a committed file
+ * @property {readonly number[]} [retryDelays]  waits before re-fetching rejected (year, type) pairs
+ * @property {(ms:number)=>Promise<void>} [sleep]
+ * @property {(rel:string)=>Promise<string|null>} readCommitted  text of a committed data file
+ */
+
+/**
+ * Fetch the case years that can change, accept or reject every (year, type) on its own against the committed
+ * file, keep the committed data of rejected ones, and rebuild the outputs from the merged rows.
+ *
+ * - normal run: current + previous year, plus any year whose committed file is missing (bootstrap)
+ * - full run (`full`): every year; frozen years are replaced only when the new totals are not lower
+ * - a rejected (year, type) with a shrink verdict is re-fetched (only those) after each of `retryDelays`
+ * - trend.json / summary.json are only produced when the current year was accepted
+ *
+ * @param {import('../run.mjs').Ctx} ctx
+ * @param {CasesOptions} opts
+ */
+export async function buildCases(ctx, opts) {
   const { http, geo, todayIso, log } = ctx;
+  const reference = opts.reference === undefined ? REFERENCE_COUNTS : opts.reference;
+  const retryDelays = opts.retryDelays ?? [];
+  const sleep = opts.sleep ?? ((/** @type {number} */ ms) => new Promise((r) => { setTimeout(r, ms); }));
   const curYear = /** @type {{y:number}} */ (parseYmd(todayIso)).y;
   const years = Array.from({ length: curYear - FIRST_YEAR + 1 }, (_, i) => FIRST_YEAR + i);
-  const jobs = years.flatMap((y) => /** @type {const} */ ([0, 1]).map((imp) => ({ y, imp })));
-  const t0 = Date.now();
-  const results = await mapLimit(jobs, CONCURRENCY, async ({ y, imp }) => {
-    const end = y === curYear ? todayIso.replaceAll('-', '/') : `${y}/12/31`;
-    const raw = await http.asmx('GetDengueLocation', {
-      citycode: 'all', immigration: String(imp), startDate: `${y}/01/01`, endDate: end,
-    });
-    return { y, imp, ...normalizeRecords(raw, { year: y, imp: /** @type {0|1} */ (imp), todayIso }) };
-  });
-  /** @type {Map<number, CaseRow[]>} */
-  const rowsByYear = new Map(years.map((y) => [y, []]));
-  const drops = emptyDrops();
-  let input = 0;
-  for (const r of results) {
-    const list = /** @type {CaseRow[]} */ (rowsByYear.get(r.y));
-    for (const row of r.rows) list.push(row);
-    for (const k of /** @type {Array<keyof DropStats>} */ (Object.keys(drops))) drops[k] += r.drops[k];
-    input += r.input;
+  const typeName = (/** @type {number} */ imp) => (imp ? 'imported' : 'local');
+
+  // ---- committed state
+  /** @type {Map<number, {text:string, file:any, totals:{local:number, imported:number}}>} */
+  const committed = new Map();
+  for (const y of years) {
+    const text = await opts.readCommitted(`cases/${y}.json`);
+    if (text === null) continue;
+    try {
+      const file = JSON.parse(text);
+      if (file?.year === y && Array.isArray(file.pts) && Array.isArray(file.c)) committed.set(y, { text, file, totals: yearTotals(file) });
+    } catch { /* unreadable: treated as missing, i.e. fetched again */ }
   }
-  log(`cases: fetched ${input} records in ${Date.now() - t0} ms`);
-  const out = buildCasesOutputs(rowsByYear, geo.locateTown, todayIso, townNameLookup(geo));
-  const dropped = Object.values(drops).reduce((a, b) => a + b, 0);
+  const fetchYears = years.filter((y) => opts.full || isActiveYear(curYear, y) || !committed.has(y));
+  const frozenSkipped = years.length - fetchYears.length;
+  const baseFor = (/** @type {number} */ y, /** @type {number} */ imp) => {
+    const c = committed.get(y);
+    if (c) return c.totals[typeName(imp)];
+    return reference && y - FIRST_YEAR < reference.local.length ? reference[typeName(imp)][y - FIRST_YEAR] : null;
+  };
+
+  // ---- fetch + per-(year, type) acceptance, re-fetching only the shrunk ones
+  /** @type {Map<string, {y:number, imp:0|1, rows:CaseRow[], drops:DropStats, input:number}>} */
+  const accepted = new Map();
+  /** @type {Map<string, {y:number, imp:0|1, reason:string, shrink:boolean}>} */
+  const rejected = new Map();
+  /** @type {Array<{y:number, imp:0|1}>} */
+  let pending = fetchYears.flatMap((y) => /** @type {const} */ ([0, 1]).map((imp) => ({ y, imp })));
+  const maxAttempts = 1 + retryDelays.length;
+  let requests = 0;
+  const t0 = Date.now();
+  for (let attempt = 1; ; attempt++) {
+    const results = await mapLimit(pending, CONCURRENCY, async ({ y, imp }) => {
+      const end = y === curYear ? todayIso.replaceAll('-', '/') : `${y}/12/31`;
+      requests++;
+      try {
+        const raw = await http.asmx('GetDengueLocation', {
+          citycode: 'all', immigration: String(imp), startDate: `${y}/01/01`, endDate: end,
+        });
+        return { y, imp, ok: /** @type {const} */ (true), ...normalizeRecords(raw, { year: y, imp, todayIso }) };
+      } catch (e) {
+        return { y, imp, ok: /** @type {const} */ (false), error: e instanceof Error ? e.message : String(e) };
+      }
+    });
+    /** @type {Array<{y:number, imp:0|1}>} */
+    const again = [];
+    for (const r of results) {
+      const key = `${r.y}|${r.imp}`;
+      if (!r.ok) {
+        rejected.set(key, { y: r.y, imp: r.imp, reason: `${r.y} ${typeName(r.imp)}: fetch failed: ${r.error}`, shrink: false });
+        continue;
+      }
+      const total = sumCounts(r.rows);
+      const base = baseFor(r.y, r.imp);
+      if (!opts.allowShrink && shrinksBelow(total, base)) {
+        rejected.set(key, { y: r.y, imp: r.imp, reason: `${r.y} ${typeName(r.imp)}: ${total} < ${committed.has(r.y) ? 'previous' : 'reference'} ${base}`, shrink: true });
+        again.push({ y: r.y, imp: r.imp });
+      } else {
+        accepted.set(key, r);
+        rejected.delete(key);
+      }
+    }
+    const rej = [...rejected.values()];
+    log(`cases: attempt ${attempt}/${maxAttempts}: ${results.length} request(s), ${results.filter((r) => accepted.has(`${r.y}|${r.imp}`)).length} accepted, ${rej.length} rejected${rej.length ? ` [${rej.map((x) => x.reason).join('; ')}]` : ''}`);
+    if (again.length === 0 || attempt >= maxAttempts) break;
+    const wait = retryDelays[attempt - 1];
+    log(`cases: re-fetching ${again.length} shrunk (year, type) pair(s) in ${wait} ms`);
+    if (wait > 0) await sleep(wait);
+    pending = again;
+  }
+  const fetched = [...accepted.values()];
+  log(`cases: fetched ${fetched.reduce((a, r) => a + r.input, 0)} records in ${Date.now() - t0} ms (${requests} request(s); ${frozenSkipped} frozen year(s) not fetched${opts.full ? ' [full verify]' : ''})`);
+
+  // a rejection can only be absorbed by a committed file
+  const unrecoverable = [...rejected.values()].filter((r) => !committed.has(r.y));
+  if (unrecoverable.length) {
+    throw new Error(`${unrecoverable.some((r) => r.shrink) ? 'case counts shrank' : 'cases fetch failed'}: ${unrecoverable.map((r) => r.reason).join('; ')}`);
+  }
+
+  // ---- merge accepted rows with committed rows of the rejected ones
+  /** @type {Map<number, CaseRow[]>} */
+  const rowsByYear = new Map();
+  /** @type {Record<number, {local:number, imported:number}>} */
+  const totals = {};
+  /** @type {Record<string,string>} */
+  const files = {};
+  const keptYears = new Set(), acceptedYears = [], changedYears = [];
+  let nullTown = 0, uniquePts = 0;
+  for (const y of years) {
+    const c = committed.get(y);
+    const mine = /** @type {const} */ ([0, 1]).map((imp) => accepted.get(`${y}|${imp}`));
+    if (!mine[0] && !mine[1]) {
+      // not fetched (frozen) or fully rejected: reuse the committed file as it is
+      const cc = /** @type {NonNullable<typeof c>} */ (c);
+      rowsByYear.set(y, rowsFromYearFile(cc.file));
+      totals[y] = cc.totals;
+      if (fetchYears.includes(y)) keptYears.add(y);
+      continue;
+    }
+    /** @type {CaseRow[]} */
+    let rows = [];
+    let old = null;
+    for (const imp of /** @type {const} */ ([0, 1])) {
+      const m = mine[imp];
+      if (m) { rows = rows.concat(m.rows); continue; }
+      old ??= rowsFromYearFile(/** @type {NonNullable<typeof c>} */ (c).file);
+      rows = rows.concat(old.filter((r) => r.imp === imp));
+      keptYears.add(y);
+    }
+    if (mine[0] && mine[1]) acceptedYears.push(y);
+    rowsByYear.set(y, rows);
+    const { file, nullTown: nt, uniquePts: up } = buildYearFile(rows, y, geo.locateTown);
+    const text = toJson(file);
+    nullTown += nt;
+    uniquePts += up;
+    totals[y] = yearTotals(file);
+    if (text !== c?.text) { files[`cases/${y}.json`] = text; changedYears.push(y); }
+  }
+  const currentYearOk = !keptYears.has(curYear);
+  let latestOnset;
+  if (currentYearOk) {
+    const out = buildTrendAndSummary(rowsByYear, geo.locateTown, todayIso, townNameLookup(geo));
+    files['trend.json'] = toJson(out.trend);
+    files['summary.json'] = toJson(out.summary);
+    latestOnset = out.latestOnset;
+  } else {
+    log(`cases: the current year ${curYear} was not accepted; trend.json and summary.json stay as they are`);
+  }
+  if (keptYears.size) log(`cases: kept the committed data of year(s) ${[...keptYears].sort().join(', ')}`);
+
+  const drops = emptyDrops();
+  for (const r of fetched) for (const k of /** @type {Array<keyof DropStats>} */ (Object.keys(drops))) drops[k] += r.drops[k];
+  const input = fetched.reduce((a, r) => a + r.input, 0);
+  const records = Object.values(totals).reduce((a, t) => a + t.local + t.imported, 0);
   return {
-    files: out.files,
+    files,
     meta: {
-      records: out.records,
-      latestOnset: out.latestOnset,
-      years: out.years,
-      totals: out.totals,
+      records,
+      latestOnset,
+      years,
+      totals,
       input,
-      dropped,
+      dropped: Object.values(drops).reduce((a, b) => a + b, 0),
       drops,
-      nullTown: out.nullTown,
-      uniquePts: out.uniquePts,
+      nullTown,
+      uniquePts,
       townMatch: { ...geo.townStats },
+      requests,
+      fetchedYears: fetchYears,
+      acceptedYears,
+      changedYears,
+      keptYears: [...keptYears].sort((a, b) => a - b),
+      rejected: [...rejected.values()].map((r) => ({ year: r.y, type: typeName(r.imp), reason: r.reason, shrink: r.shrink })),
+      currentYearOk,
     },
   };
 }
-

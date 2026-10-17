@@ -100,3 +100,11 @@ export const SHRINK_TOLERANCE = { rel: 0.02, abs: 5 };
 
 /** Names of the independent sources, in manifest order. */
 export const SOURCE_NAMES = /** @type {const} */ (['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1', 'travel']);
+
+/**
+ * Case years that can still change: the current Taiwan year and the one before it (in January this covers
+ * 13+ months).  Older ("frozen") years are only fetched by a full verify run or when their file is missing.
+ */
+export const ACTIVE_YEAR_SPAN = 2;
+/** Delays (ms) between re-fetches of rejected years / imported data (default; tests pass [0, 0]). */
+export const SHRINK_RETRY_DELAYS_MS = Object.freeze([90_000, 180_000]);

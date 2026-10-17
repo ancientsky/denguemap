@@ -32,6 +32,15 @@ export function allowedShrink(base) {
 }
 
 /**
+ * Single-count version of the shrink rule: is `total` acceptable against `base`?
+ * (The same tolerance applies to every (year, type) and to imported years.)
+ * @param {number} total @param {number|null|undefined} base committed (or reference) value; null = nothing to compare
+ */
+export function shrinksBelow(total, base) {
+  return typeof base === 'number' && total < base - allowedShrink(base);
+}
+
+/**
  * Compare new per-year totals with the previously committed ones (or the
  * reference counts when a year has no committed file yet).
  * @param {Record<number, {local:number, imported:number}>} totals

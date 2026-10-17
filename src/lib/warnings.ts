@@ -30,3 +30,17 @@ export function sourceState(s: SourceStatus | undefined): SourceState {
 export function isUnavailable(m: Manifest | null, key: string): boolean {
   return !!m && key in m.sources && sourceState(m.sources[key]) === 'unavailable';
 }
+
+/** A year whose data was kept from an earlier run (upstream temporarily returned less); `at` = that data's fetch time. */
+export interface KeptYear {
+  year: number;
+  at: string | null;
+}
+
+/** Kept years of a source (`cases` / `imported`), optionally limited to `years`. */
+export function keptYears(m: Manifest | null, key: string, years?: readonly number[]): KeptYear[] {
+  const s = m?.sources[key];
+  if (!s?.keptYears?.length) return [];
+  const only = years ? new Set(years) : null;
+  return s.keptYears.filter((y) => !only || only.has(y)).map((y) => ({ year: y, at: s.yearsFetchedAt?.[String(y)] ?? null }));
+}

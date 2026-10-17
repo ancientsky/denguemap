@@ -1,6 +1,7 @@
 // Shared view UI: floating panel / mobile bottom sheet, form controls, KPI cards, tables.
-import { fmtNum, t } from '../i18n';
+import { fmtDateTime, fmtNum, t } from '../i18n';
 import type { DataWarning } from '../lib/types';
+import type { KeptYear } from '../lib/warnings';
 import { h, nextId } from '../lib/dom';
 import { icon, type IconName } from '../lib/icons';
 import type { PaddingFn } from '../map/host';
@@ -124,6 +125,10 @@ export function warningText(w: DataWarning): string {
   if (w.code === 'cases-shortfall') return t('warn.casesShortfall', { ...vars, type: w.type === 'imported' ? t('warn.typeImported') : w.type === 'local' ? t('warn.typeLocal') : '' });
   if (w.code === 'imported-shortfall') return t(w.year != null ? 'warn.importedShortfallYear' : 'warn.importedShortfallAll', vars);
   return t('warn.generic', vars);
+}
+
+export function keptYearText(k: KeptYear): string {
+  return k.at ? t('warn.keptYear', { year: k.year, date: fmtDateTime(k.at) }) : t('warn.keptYearNoDate', { year: k.year });
 }
 
 /** Inline data-quality notice. */

@@ -131,17 +131,16 @@ describe('pipeline end to end (mock backend)', () => {
     expect(Object.values(m.sources).every((s) => s.ok && !s.stale)).toBe(true);
   });
 
-  it('a shrinking case count makes only the cases source stale', async () => {
+  it('a shrinking current-year count makes cases stale (current year kept), trend/summary stay', async () => {
     const before = await snapshot();
-    server.state.mutate = (method, body, data) => (method === 'GetDengueLocation' && body.startDate.startsWith('2015') && body.immigration === '0' ? data.slice(0, 1) : data);
+    server.state.mutate = (method, body, data) => (method === 'GetDengueLocation' && body.startDate.startsWith('2026') && body.immigration === '0' ? data.slice(0, 1) : data);
     const r = await run({ ...common(), now: new Date('2026-10-16T11:00:00Z') });
     server.state.mutate = null;
-    expect(r.results.cases.ok).toBe(false);
-    expect(r.results.cases.error).toMatch(/shrank/);
-    expect(server.state.requests.filter((q) => q.includes('GetDengueLocation')).length).toBeGreaterThan(0);
+    expect(r.results.cases.meta.currentYearOk).toBe(false);
+    expect(r.results.cases.meta.rejected).toEqual([expect.objectContaining({ year: 2026, type: 'local', shrink: true })]);
     const after = await snapshot();
     for (const k of Object.keys(before)) if (k.startsWith('cases/') || k === 'trend.json' || k === 'summary.json') expect(after[k]).toBe(before[k]);
-    expect(JSON.parse(after['manifest.json']).sources.cases).toMatchObject({ ok: false, stale: true });
+    expect(JSON.parse(after['manifest.json']).sources.cases).toMatchObject({ ok: false, stale: true, keptYears: [2026] });
   });
 
   it('passes the reference check on a fresh directory when counts are not lower', async () => {
@@ -185,7 +184,7 @@ describe('retry when the backend answers with truncated history', () => {
   let rdir;
   const extra = Array.from({ length: 20 }, () => ({ sickdate: '2026/05/01', country_code: 'vn', country_name: '越南', count: 1, country_lat: 14.06, country_lng: 108.28 }));
   const fullImported = (method, _body, data) => (method === 'GetImportedData' ? [...data, ...extra] : data);
-  const callsOf = (method, pred = () => true) => server.state.requests.filter((q) => q.includes(method) && pred(q)).length;
+  const callsOf = (method, pred = () => true) => server.state.calls.filter((c) => c.method === method && pred(c)).length;
   const opts = (over = {}) => ({ ...common(), outDir: rdir, retryDelaysMs: [0, 0], ...over });
 
   it('seeds a fresh directory from full data', { timeout: 30_000 }, async () => {
@@ -198,61 +197,59 @@ describe('retry when the backend answers with truncated history', () => {
     expect(r.results.imported.meta.records).toBe(25);
   });
 
-  it('truncated twice, full on the third attempt: both sources succeed', { timeout: 30_000 }, async () => {
+  it('truncated twice, full on the third attempt: both sources fully succeed', { timeout: 30_000 }, async () => {
     const logs = [];
     let importedCalls = 0, locCalls = 0;
     server.state.mutate = (method, body, data) => {
       if (method === 'GetImportedData') return ++importedCalls <= 2 ? data : fullImported(method, body, data); // 5 rows < 25 - 5
-      if (method === 'GetDengueLocation' && body.startDate.startsWith('2015') && body.immigration === '0') return ++locCalls <= 2 ? data.slice(0, 1) : data;
+      if (method === 'GetDengueLocation' && body.startDate.startsWith('2025') && body.immigration === '0') return ++locCalls <= 2 ? data.slice(0, 1) : data;
       return data;
     };
     const r = await run(opts({ now: new Date('2026-10-16T05:00:00Z'), log: (m) => logs.push(m) }));
     server.state.mutate = null;
     expect(r.exitCode).toBe(0);
-    expect(r.results.imported.ok).toBe(true);
-    expect(r.results.cases.ok).toBe(true);
+    expect(r.results.imported.meta).toMatchObject({ currentYearOk: true, keptYears: [] });
+    expect(r.results.cases.meta).toMatchObject({ currentYearOk: true, keptYears: [] });
     expect(importedCalls).toBe(3);
     expect(locCalls).toBe(3);
-    expect(logs.filter((m) => /^\[(imported|cases)\] attempt \d\/3 below the committed counts/.test(m))).toHaveLength(4);
-    expect(logs.some((m) => /^\[imported\] ok .*\(attempt 3\/3\)/.test(m))).toBe(true);
+    expect(logs.filter((m) => /^cases: attempt \d\/3/.test(m))).toHaveLength(3);
+    expect(logs.filter((m) => /^imported: attempt \d\/3/.test(m))).toHaveLength(3);
     const imp = JSON.parse(await readFile(join(rdir, 'imported.json'), 'utf8'));
     expect(imp.events.reduce((a, e) => a + e[2], 0)).toBe(25);
     const m = JSON.parse(await readFile(join(rdir, 'manifest.json'), 'utf8'));
-    expect(m.sources.imported).toMatchObject({ ok: true, stale: false, records: 25 });
+    expect(m.sources.imported).toMatchObject({ ok: true, stale: false, records: 25, keptYears: [] });
+    expect(r.probe).toBeNull(); // everything was accepted in the end: no probe
   });
 
-  it('still truncated after 3 attempts: stale, previous files kept', async () => {
+  it('still truncated after 3 attempts: only the shrunk years are kept, imported is stale for the current year', async () => {
     const before = await snapshot(rdir);
     const imp0 = callsOf('GetImportedData');
-    server.state.mutate = (method, body, data) => data;
     const logs = [];
-    const r = await run(opts({ now: new Date('2026-10-16T06:00:00Z'), log: (m) => logs.push(m) }));
-    server.state.mutate = null;
+    const r = await run(opts({ now: new Date('2026-10-16T06:00:00Z'), log: (m) => logs.push(m) })); // mock returns 5 rows < 25 - 5 for 2026
     expect(r.exitCode).toBe(0);
-    expect(r.results.imported.ok).toBe(false);
-    expect(r.results.imported.error).toMatch(/imported shrank: 5 < 25/);
+    expect(r.results.imported.ok).toBe(true); // wrote what it could ...
+    expect(r.results.imported.meta).toMatchObject({ currentYearOk: false, keptYears: [2026] });
     expect(callsOf('GetImportedData') - imp0).toBe(3);
-    expect(logs.some((m) => /^\[imported\] FAILED after 3\/3 attempt/.test(m))).toBe(true);
     const after = await snapshot(rdir);
-    expect(after['imported.json']).toBe(before['imported.json']);
-    expect(JSON.parse(after['manifest.json']).sources.imported).toMatchObject({ ok: false, stale: true, records: 25 });
+    expect(after['imported.json']).toBe(before['imported.json']); // ... which is identical: 2026 events kept
+    expect(JSON.parse(after['manifest.json']).sources.imported).toMatchObject({ ok: false, stale: true, records: 25, keptYears: [2026] });
+    expect(r.probe).not.toBeNull();
   });
 
   it('does not retry other failures (e.g. HTTP errors)', async () => {
-    const n0 = callsOf('GetImportedData');
+    const reqs = () => server.state.requests.filter((q) => q.includes('GetImportedData')).length;
+    const n0 = reqs();
     server.state.fail.add('GetImportedData');
     const r = await run(opts({ now: new Date('2026-10-16T07:00:00Z'), backoffMs: 0 }));
     server.state.fail.clear();
     expect(r.results.imported.ok).toBe(false);
     // http-level retries (4 attempts) only; no extra shrink-retry rounds
-    expect(callsOf('GetImportedData') - n0).toBe(4);
+    expect(reqs() - n0).toBe(4);
   });
 
   it('waits the configured delays between attempts', async () => {
-    server.state.mutate = null; // imported has 5 rows < 25 - 5
     const t0 = Date.now();
     await run(opts({ now: new Date('2026-10-16T08:00:00Z'), retryDelaysMs: [60, 60], only: ['imported'] }));
-    server.state.mutate = null;
     expect(Date.now() - t0).toBeGreaterThanOrEqual(110);
   });
 

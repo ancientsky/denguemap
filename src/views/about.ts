@@ -3,8 +3,8 @@ import { fmtDate, fmtDateTime, fmtNum, getLang, t, type MessageKey } from '../i1
 import { extLink, h } from '../lib/dom';
 import { icon, type IconName } from '../lib/icons';
 import type { View, ViewContext } from './types';
-import { warningText } from './ui';
-import { sourceState } from '../lib/warnings';
+import { keptYearText, warningText } from './ui';
+import { keptYears, sourceState } from '../lib/warnings';
 
 const SOURCES = ['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1', 'travel'] as const;
 
@@ -58,8 +58,10 @@ export default async function aboutView(ctx: ViewContext): Promise<View> {
   const m = await app.whenManifest();
   const loading = freshCard.querySelector('.view-loading');
   const warns = m?.warnings ?? [];
-  if (!warns.length) qualityList.append(h('li', { class: 'status-ok' }, icon('check'), t('about.qualityNone')));
+  const kept = [...keptYears(m ?? null, 'cases'), ...keptYears(m ?? null, 'imported').map((k) => ({ ...k, imported: true }))];
+  if (!warns.length && !kept.length) qualityList.append(h('li', { class: 'status-ok' }, icon('check'), t('about.qualityNone')));
   for (const w of [...warns].sort((a, b) => (a.year ?? 0) - (b.year ?? 0))) qualityList.append(h('li', null, warningText(w)));
+  for (const k of kept) qualityList.append(h('li', null, ('imported' in k ? `${t('warn.typeImported')}：` : '') + keptYearText(k)));
   if (!m) {
     loading?.replaceWith(h('p', { class: 'status-stale' }, icon('alert'), t('common.loadError')));
   } else {

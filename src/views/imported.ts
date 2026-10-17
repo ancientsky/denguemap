@@ -16,12 +16,12 @@ import { normalizeImportedParams, serializeImportedParams, type AdvLayer, type I
 import { advisoryLevel, dayToISO, filterNews, importedEvents, levelHistogram, levelsByCountry } from '../lib/travel';
 import { VB_KEYS, type Imported, type Notices, type Travel, type TravelNews, type VbKey } from '../lib/types';
 import { validateImported, validateNotices, validateTopology, validateTravel } from '../lib/validate';
-import { importedShortfall, isUnavailable } from '../lib/warnings';
+import { importedShortfall, isUnavailable, keptYears } from '../lib/warnings';
 import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
 import type { Palette } from '../map/palette';
 import { ImportAnimator, SRC } from './importedAnim';
 import type { View, ViewContext } from './types';
-import { isMobile, loadingBlock, notice, panel, section, segmented, select, tabs, unavailableState, warningText } from './ui';
+import { isMobile, keptYearText, loadingBlock, notice, panel, section, segmented, select, tabs, unavailableState, warningText } from './ui';
 
 const SAFETRAVEL = 'https://ancientsky.github.io/safetravel/';
 const L = {
@@ -417,7 +417,8 @@ export default async function importedView(ctx: ViewContext): Promise<View> {
     totalLine.textContent = rows.length ? t('imported.total', { n: fmtNum(total), c: fmtNum(rows.length) }) : t('imported.empty');
     clear(warnBox);
     const w0 = importedShortfall(manifest?.warnings ?? [], st.year);
-    const wn = w0 ? notice([warningText(w0)]) : null;
+    const kept = keptYears(manifest ?? null, 'imported', st.year != null ? [st.year] : undefined);
+    const wn = notice([...(w0 ? [warningText(w0)] : []), ...kept.map(keptYearText)]);
     if (wn) warnBox.append(wn);
     renderRank();
     const arcs: GeoJSON.Feature[] = [];

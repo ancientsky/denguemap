@@ -3,10 +3,16 @@ name: data
 on:
   schedule:
     - cron: "23 */3 * * *"
+    # weekly full verify (Sun 03:41 Taipei): also fetches the frozen case years, replacing them only if not lower
+    - cron: "41 19 * * 6"
   workflow_dispatch:
     inputs:
       allow_shrink:
         description: "Accept case counts lower than the committed data (use after an official correction)"
+        type: boolean
+        default: false
+      full:
+        description: "Full verify: also fetch the frozen case years (older than last year); replaced only if not lower"
         type: boolean
         default: false
 
@@ -53,6 +59,7 @@ jobs:
       - name: Fetch and build data
         env:
           DATA_ALLOW_SHRINK: ${{ inputs.allow_shrink && '1' || '' }}
+          DATA_FULL: ${{ (inputs.full || github.event.schedule == '41 19 * * 6') && '1' || '' }}
         run: npm run data
 
       - name: Commit data
