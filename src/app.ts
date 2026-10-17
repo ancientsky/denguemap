@@ -4,7 +4,7 @@ import { getManifest, loadManifest } from './lib/data';
 import { $, clear, h } from './lib/dom';
 import { carryDiffers, getEmbedState, openFullHash, pickCarry, stripCarry } from './lib/embed';
 import { brandMark, icon, type IconName } from './lib/icons';
-import { buildHash, isRouterHash, parseHash, type Params, type Route } from './lib/router';
+import { buildHash, isRouterHash, navigationPending, parseHash, type Params, type Route } from './lib/router';
 import type { Manifest } from './lib/types';
 import { sourceState } from './lib/warnings';
 import type { MapHost } from './map/host';
@@ -281,6 +281,10 @@ export class App {
 
   /** Update the URL query for the current view without re-rendering (shareable state). */
   setParams(params: Params): void {
+    // The outgoing view may still write its state (e.g. after an async load) between the hash changing
+    // and our hashchange handler running; rebuilding the hash from the old route then would undo the
+    // navigation and bounce the user back. Drop such late writes.
+    if (navigationPending(this.route, location.hash)) return;
     this.params = params;
     this.renderEmbedLink();
     const hash = buildHash(this.route, { ...this.carry, ...params });

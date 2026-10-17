@@ -901,6 +901,32 @@ try {
     }
     await ctx.close();
     console.log('mobile zoom regression pass done');
+    // Regression: a view writing its state in the same tick as a navigation (before hashchange is handled)
+    // must not undo the navigation. The vector toggle persists its state synchronously, so clicking it right
+    // after changing the hash reproduces the race deterministically; before the fix it bounced back to vector.
+    {
+      const label = 'nav-race';
+      const rctx = await browser.newContext({ ...DEVICES.desktop, reducedMotion: 'reduce' });
+      await prepare(rctx);
+      const rp = await rctx.newPage();
+      try {
+        await rp.goto(`${BASE}#/vector`, { waitUntil: 'load' });
+        await mapReady(rp, label);
+        const clicked = await rp.evaluate(() => {
+          const input = document.querySelector('.switch-input');
+          location.hash = '#/map';
+          input?.click(); // same tick: the vector view persists its state before hashchange runs
+          return !!input;
+        });
+        if (!clicked) failures.push(`[${label}] vector view has no toggle to click`);
+        await rp.waitForFunction(() => document.body.dataset.route === 'map' && location.hash.startsWith('#/map'), null, { timeout: 10000 })
+          .catch(async () => failures.push(`[${label}] navigation undone by a late view write: ${JSON.stringify(await rp.evaluate(() => [document.body.dataset.route, location.hash]))}`));
+      } catch (e) {
+        failures.push(`[${label}] ${e.message}`);
+      }
+      await rctx.close();
+      console.log('navigation race pass done');
+    }
   }
   // Imported globe animation: capture mid-animation frames (motion allowed) in both themes.
   if (run('anim')) for (const theme of THEMES) {
