@@ -8,7 +8,7 @@ import { loadAdmin, type Admin } from '../lib/admin';
 import { aggregateCases } from '../lib/aggregate';
 import { csvBlob, downloadBlob } from '../lib/csv';
 import { DataError, loadData } from '../lib/data';
-import { addDays, dayOfYear } from '../lib/dates';
+import { addDays, dayOfYear, recencyRef } from '../lib/dates';
 import { clear, h } from '../lib/dom';
 import { TAIWAN_BOUNDS, type BBox } from '../lib/geo';
 import { icon } from '../lib/icons';
@@ -199,6 +199,7 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
     if (!m) return;
     const ref = m.latestOnset;
     const start = addDays(ref, -RECENT_DAYS);
+    const colourRef = recencyRef(ref, ref);
     const years = [...new Set([+start.slice(0, 4), +ref.slice(0, 4)])].filter((y) => m.years.includes(y));
     caseNote.append(h('p', { class: 'inline-status busy', role: 'status' }, t('app.loading')));
     try {
@@ -212,7 +213,7 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
         const to = f.year === +ref.slice(0, 4) ? dayOfYear(ref) : 366;
         const agg = aggregateCases(f, { from, to, type: 'all', county: null });
         const base = f.year * 100_000;
-        for (const ft of caseFeatures(f, agg, ref, base)) {
+        for (const ft of caseFeatures(f, agg, colourRef, base)) {
           feats.push(ft);
           caseTowns.set(Number(ft.id), f.pts[Number(ft.id) - base]?.[2] ?? null);
         }

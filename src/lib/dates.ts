@@ -40,6 +40,21 @@ export function addDays(iso: string, n: number): string {
   return toISO(parseISO(iso) + n * DAY);
 }
 
+/** Today's date in Taiwan (Asia/Taipei) as YYYY-MM-DD. */
+export function todayTaipei(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+}
+
+/**
+ * Reference date for recency colouring. When the range ends at the newest data,
+ * measure from today (as the old CDC map did: "目前日期與發病日"), so a case
+ * that fell ill 6 days ago is still flagged even if reporting lags; otherwise
+ * use the end of the selected range (history browsing and playback).
+ */
+export function recencyRef(rangeEnd: string, latestOnset: string, today: string = todayTaipei()): string {
+  return rangeEnd >= latestOnset && today > rangeEnd ? today : rangeEnd;
+}
+
 /** Whole days from a to b (b - a). */
 export function dayDiff(a: string, b: string): number {
   return Math.round((parseISO(b) - parseISO(a)) / DAY);

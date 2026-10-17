@@ -245,7 +245,7 @@ export const zhHant = {
   'rec.shapeLocal': '實心圓＝本土',
   'rec.shapeImported': '空心環＝境外移入',
   'rec.ref': '基準日',
-  'rec.refNote': '顏色依發病日距基準日（日期區間的最後一天）的天數。',
+  'rec.refNote': '顏色依發病日距基準日的天數；區間包含最新資料時基準日為今天，否則為區間最後一天。',
   'map.colorMode': '著色',
   'map.color.recency': '發病距今',
   'map.color.type': '本土・境外',

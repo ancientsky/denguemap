@@ -247,7 +247,7 @@ export const en: Dictionary = {
   'rec.shapeLocal': 'Solid = local',
   'rec.shapeImported': 'Ring = imported',
   'rec.ref': 'Reference date',
-  'rec.refNote': 'Colour shows days from onset to the reference date (the end of the date range).',
+  'rec.refNote': 'Colour shows days from onset to the reference date: today when the range includes the latest data, otherwise the last day of the range.',
   'map.colorMode': 'Colour by',
   'map.color.recency': 'Days since onset',
   'map.color.type': 'Local · imported',

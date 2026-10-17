@@ -6,7 +6,7 @@ import { fmtDate, fmtNum, getLang, placeName, t } from '../i18n';
 import { loadAdmin, type Admin } from '../lib/admin';
 import { aggregateCases, dailyCounts, niceBreaks, topEntries, type CaseAggregate } from '../lib/aggregate';
 import { loadData, DataError } from '../lib/data';
-import { dateFromDoy, dayDiff } from '../lib/dates';
+import { dateFromDoy, dayDiff, recencyRef } from '../lib/dates';
 import { clear, h, rafThrottle } from '../lib/dom';
 import { TAIWAN_BOUNDS } from '../lib/geo';
 import { icon } from '../lib/icons';
@@ -295,7 +295,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   const badgeDate = h('span', { class: 'date-badge-date' });
   const badge = h('div', { class: 'date-badge', title: t('rec.refNote') }, h('span', { class: 'date-badge-label' }, t('rec.ref')), badgeDate);
   root.append(badge);
-  const refISO = () => dateFromDoy(st.year, st.to);
+  const refISO = () => recencyRef(dateFromDoy(st.year, st.to), manifest!.latestOnset);
   function renderBadge(): void {
     const d = refISO();
     badgeDate.textContent = `${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)}`;
