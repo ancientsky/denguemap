@@ -1,4 +1,5 @@
 // i18n runtime: language detection, t(), Intl formatters, document metadata.
+import { canPersistPrefs, getEmbedState, parseLangParam } from '../lib/embed';
 import { getPref, setPref, Emitter } from '../lib/prefs';
 import { parseISO } from '../lib/dates';
 import { zhHant, type Dictionary, type MessageKey } from './zh-Hant';
@@ -12,11 +13,10 @@ async function ensureDict(l: Lang): Promise<void> {
 const PREF = 'denguemap.lang';
 
 export function detectLang(search: string, hashQuery: string, stored: string | null, navLangs: readonly string[]): Lang {
-  const q = new URLSearchParams(search).get('lang') ?? new URLSearchParams(hashQuery).get('lang');
-  const norm = (s: string | null): Lang | null => (s === 'en' ? 'en' : s === 'zh' || s === 'zh-Hant' || s === 'zh-TW' ? 'zh' : null);
-  const fromQuery = norm(q);
+  // First valid ?lang= wins (location.search, then the hash query); invalid values are ignored.
+  const fromQuery = parseLangParam(new URLSearchParams(search).get('lang')) ?? parseLangParam(new URLSearchParams(hashQuery).get('lang'));
   if (fromQuery) return fromQuery;
-  const fromStore = norm(stored);
+  const fromStore = parseLangParam(stored);
   if (fromStore) return fromStore;
   for (const l of navLangs) {
     const s = l.toLowerCase();
@@ -40,7 +40,9 @@ export function t(key: MessageKey, vars?: Record<string, string | number>): stri
 export async function initLang(): Promise<Lang> {
   const hash = location.hash;
   const q = hash.indexOf('?');
-  const want = detectLang(location.search, q >= 0 ? hash.slice(q + 1) : '', getPref(PREF), navigator.languages ?? [navigator.language]);
+  // Embed mode ignores the visitor's saved language (and never writes it): the host picks via ?lang=.
+  const stored = getEmbedState().embed ? null : getPref(PREF);
+  const want = detectLang(location.search, q >= 0 ? hash.slice(q + 1) : '', stored, navigator.languages ?? [navigator.language]);
   try {
     await ensureDict(want);
     lang = want;
@@ -59,7 +61,7 @@ export async function setLang(l: Lang): Promise<void> {
     return;
   }
   lang = l;
-  setPref(PREF, l);
+  if (canPersistPrefs(getEmbedState())) setPref(PREF, l);
   fmtCache.clear();
   applyDocumentLang();
   langChanged.emit(l);
@@ -99,6 +101,12 @@ export function fmtDate(iso: string, style: DateStyle = 'medium'): string {
   const ms = parseISO(iso);
   if (Number.isNaN(ms)) return iso || '—';
   return cached(`d-${style}`, () => new Intl.DateTimeFormat(locale(), { ...DATE_OPTS[style], timeZone: 'UTC' })).format(ms);
+}
+/** Format the calendar date of an ISO timestamp in Taiwan time (no clock time). */
+export function fmtTsDate(isoTs: string | null): string {
+  const ms = isoTs ? Date.parse(isoTs) : NaN;
+  if (Number.isNaN(ms)) return '—';
+  return cached('tsd', () => new Intl.DateTimeFormat(locale(), { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'Asia/Taipei' })).format(ms);
 }
 /** Format an ISO timestamp in Taiwan time. */
 export function fmtDateTime(isoTs: string | null, withYear = false): string {

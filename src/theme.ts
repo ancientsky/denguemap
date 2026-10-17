@@ -1,5 +1,6 @@
 // Theme preference ('system' | 'light' | 'dark') → html[data-theme] = effective 'light' | 'dark'.
 // public/theme-init.js applies the same logic synchronously before first paint.
+import { canPersistPrefs, getEmbedState, initialThemePref } from './lib/embed';
 import { Emitter, getPref, setPref } from './lib/prefs';
 
 export type ThemePref = 'system' | 'light' | 'dark';
@@ -9,12 +10,13 @@ const ORDER: ThemePref[] = ['system', 'light', 'dark'];
 const mq = matchMedia('(prefers-color-scheme: dark)');
 
 export const themeChanged = new Emitter<Theme>();
+// Embed mode (or an explicit ?theme=) takes precedence over the saved preference and is never persisted.
 let pref: ThemePref = readPref();
 let effective: Theme = resolve(pref);
 
 function readPref(): ThemePref {
-  const v = getPref(KEY);
-  return v === 'light' || v === 'dark' ? v : 'system';
+  const st = getEmbedState();
+  return initialThemePref(st, st.embed ? null : getPref(KEY));
 }
 function resolve(p: ThemePref): Theme {
   return p === 'system' ? (mq.matches ? 'dark' : 'light') : p;
@@ -52,7 +54,7 @@ export const nextThemePref = (p: ThemePref): ThemePref => ORDER[(ORDER.indexOf(p
 
 export function cycleTheme(): void {
   pref = nextThemePref(pref);
-  setPref(KEY, pref);
+  if (canPersistPrefs(getEmbedState())) setPref(KEY, pref);
   const next = resolve(pref);
   const changed = next !== effective;
   effective = next;

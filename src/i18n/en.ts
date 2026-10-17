@@ -35,6 +35,14 @@ export const en: Dictionary = {
   'fresh.title': 'Data generated {time}; latest onset {date}',
   'fresh.staleTitle': 'These sources failed to update and show the previous version: {list}',
 
+  'embed.open': 'Dengue Map',
+  'embed.openTitle': 'Open the full Dengue Map in a new tab',
+  'embed.data': 'Data: Taiwan CDC · updated {date}',
+  'embed.dataFixture': 'Synthetic demo data, not real cases',
+  'embed.gestureWin': 'Use Ctrl + scroll to zoom the map',
+  'embed.gestureMac': 'Use ⌘ + scroll to zoom the map',
+  'embed.gestureTouch': 'Use two fingers to move the map',
+
   'common.local': 'Local',
   'common.imported': 'Imported',
   'common.importedShort': 'Imported',

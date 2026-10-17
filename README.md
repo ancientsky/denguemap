@@ -18,6 +18,7 @@
 - **病例趨勢**：1998 年起每日／每週流行曲線、歷年同週比較、年度長條圖
 - **境外移入**：各國移入弧線（地球投影）、國家排行、疾管署國際疫情資訊
 - **資料說明**：來源、更新時間、隱私、資料品質警示
+- **嵌入模式**：`?embed=1` 可用 iframe 嵌入其他網站（隱藏標題與導覽、Ctrl＋滾輪縮放、佈景／語言由網址決定且不寫入偏好）→ [docs/embedding.md](docs/embedding.md)
 
 ## 架構
 
@@ -27,7 +28,7 @@ GitHub Actions（每 3 小時） scripts/data → public/data/*.json（有變動
 
 - 前端：Vite + TypeScript（無框架）、MapLibre GL 6、ECharts 6（只在趨勢頁載入）
 - 資料：抓疾管署登革熱地圖後端，驗證後輸出靜態 JSON；來源失敗時沿用上一版，不會部署空資料
-- 詳細研究與設計：[docs/research.md](docs/research.md)；資料格式：[docs/data-contract.md](docs/data-contract.md)
+- 詳細研究與設計：[docs/research.md](docs/research.md)；資料格式：[docs/data-contract.md](docs/data-contract.md)；嵌入方式：[docs/embedding.md](docs/embedding.md)
 
 ## 開發
 

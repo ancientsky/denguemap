@@ -1,8 +1,10 @@
 import './styles/main.css';
 import { App } from './app';
 import { initLang } from './i18n';
+import { initEmbed } from './lib/embed';
 import { initTheme } from './theme';
 
+initEmbed(); // read ?embed/?theme/?lang before anything rewrites the URL
 initTheme();
 // Map routes: start fetching MapLibre + the map host in parallel with i18n/manifest (no waterfall).
 const h0 = location.hash;

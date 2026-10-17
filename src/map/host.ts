@@ -14,6 +14,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { t, getLang, type Lang } from '../i18n';
 import { loadAdmin, type Admin } from '../lib/admin';
 import { prefersReducedMotion } from '../lib/dom';
+import { isEmbed } from '../lib/embed';
 import { TAIWAN_BOUNDS, type BBox } from '../lib/geo';
 import { Emitter } from '../lib/prefs';
 import { getTheme, type Theme } from '../theme';
@@ -48,6 +49,15 @@ export interface Overlay {
 
 export type BasemapMode = 'remote' | 'fallback';
 export type PaddingFn = () => { top: number; right: number; bottom: number; left: number };
+
+/** MapLibre's cooperative-gesture help texts (it only reads `locale` at creation), in the UI language. */
+function gestureLocale(): Record<string, string> {
+  return {
+    'CooperativeGesturesHandler.WindowsHelpText': t('embed.gestureWin'),
+    'CooperativeGesturesHandler.MacHelpText': t('embed.gestureMac'),
+    'CooperativeGesturesHandler.MobileHelpText': t('embed.gestureTouch'),
+  };
+}
 
 export class MapHost {
   readonly map: MLMap;
@@ -84,6 +94,9 @@ export class MapHost {
       localIdeographFontFamily: '"Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif',
       fadeDuration: prefersReducedMotion() ? 0 : 200,
       cancelPendingTileRequestsWhileZooming: true,
+      // Embedded in someone else's page: wheel/one-finger gestures must scroll that page, not the map
+      // (Ctrl/⌘ + wheel zooms, two fingers pan on touch). Help overlay texts follow the UI language.
+      ...(isEmbed() ? { cooperativeGestures: true, locale: gestureLocale() } : {}),
     });
     this.map.touchZoomRotate.disableRotation();
     this.map.keyboard.disableRotation();
@@ -186,6 +199,17 @@ export class MapHost {
     this.popup?.remove();
     if (this.styleReady && this.mode === 'remote') this.applyLabelLang(lang);
     this.map.getContainer().setAttribute('aria-label', t('map.regionLabel'));
+    if (isEmbed()) this.applyGestureText();
+  }
+
+  /** The handler builds its overlay once from the creation-time locale; retitle the live DOM on language change. */
+  private applyGestureText(): void {
+    const box = this.map.getCanvasContainer();
+    const mac = this.map.cooperativeGestures._bypassKey === 'metaKey';
+    const desktop = box.querySelector('.maplibregl-desktop-message');
+    const touch = box.querySelector('.maplibregl-mobile-message');
+    if (desktop) desktop.textContent = t(mac ? 'embed.gestureMac' : 'embed.gestureWin');
+    if (touch) touch.textContent = t('embed.gestureTouch');
   }
 
   private applyLabelLang(lang: Lang): void {

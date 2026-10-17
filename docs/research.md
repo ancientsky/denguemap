@@ -107,6 +107,7 @@ GitHub Actions（每 3 小時＋手動）
 - 資料管線：只接受預期欄位（白名單）、型別與範圍檢查、筆數驟降保護；失敗不覆蓋。
 - GitHub Actions：action 釘選 commit SHA、最小權限（`contents: read`；部署 job 才有 `pages: write`/`id-token: write`；資料 job 才有 `contents: write`）、`concurrency` 防重疊、`npm ci`、Dependabot。
 - 相依套件少：執行期只有 `maplibre-gl`、`echarts`、`topojson-client`。
+- 嵌入（iframe）：`?embed=1` 只改版面與手勢，CSP 不放寬；`<meta>` CSP 無法設定 `frame-ancestors`，GitHub Pages 又不能送回應標頭，正式環境需由自有網域的伺服器送 `Content-Security-Policy: frame-ancestors …`。見 [embedding.md](embedding.md)。
 
 ### 3.5 效能預算
 

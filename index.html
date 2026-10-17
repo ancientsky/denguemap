@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- Embedding (docs/embedding.md): a <meta> CSP cannot carry frame-ancestors, so this page cannot restrict who
+         frames it. Production must send `Content-Security-Policy: frame-ancestors <official origin>` as an HTTP
+         response header (GitHub Pages cannot set response headers). -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' https://tiles.openfreemap.org; worker-src 'self' blob:; child-src blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; manifest-src 'self'" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="color-scheme" content="light dark" />

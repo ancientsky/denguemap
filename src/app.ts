@@ -1,7 +1,8 @@
 // Application shell: header/nav, hash routing, view lifecycle, shared map host, freshness indicator.
-import { fmtDate, fmtDateTime, getLang, langChanged, setLang, t, type MessageKey } from './i18n';
+import { fmtDate, fmtDateTime, fmtTsDate, getLang, langChanged, setLang, t, type MessageKey } from './i18n';
 import { getManifest, loadManifest } from './lib/data';
 import { $, clear, h } from './lib/dom';
+import { carryDiffers, getEmbedState, openFullHash, pickCarry, stripCarry } from './lib/embed';
 import { brandMark, icon, type IconName } from './lib/icons';
 import { buildHash, isRouterHash, parseHash, type Params, type Route } from './lib/router';
 import type { Manifest } from './lib/types';
@@ -43,6 +44,11 @@ export class App {
   private live!: HTMLElement;
   private nav!: HTMLElement;
   private fresh!: HTMLAnchorElement;
+  private embedBar: HTMLElement | null = null;
+  private embedData!: HTMLElement;
+  private embedOpen!: HTMLAnchorElement;
+  /** Shell params (embed/theme/lang) that arrived in the hash and must survive every hash rewrite. */
+  private carry: Params = {};
   private langBtn!: HTMLButtonElement;
   private themeBtn!: HTMLButtonElement;
   private hostP: Promise<MapHost | null> | null = null;
@@ -96,7 +102,47 @@ export class App {
     this.live = h('div', { class: 'sr-only', 'aria-live': 'polite', 'aria-atomic': 'true', id: 'live' });
     clear(this.root);
     this.root.append(skip, header, main, this.live);
+    if (getEmbedState().embed) this.buildEmbedBar();
     this.renderShellText();
+  }
+
+  /** Embed mode: always-visible strip with a link to the full site (same view + state) and the data line. */
+  private buildEmbedBar(): void {
+    this.embedOpen = h('a', { class: 'embed-open', href: './#/map', target: '_blank', rel: 'noopener noreferrer' },
+      brandMark(), h('span', { class: 'embed-open-text' }), icon('external'));
+    this.embedData = h('span', { class: 'embed-data' });
+    this.embedBar = h('footer', { class: 'embed-bar' }, this.embedOpen, this.embedData);
+    this.root.append(this.embedBar);
+  }
+
+  private renderEmbedBar(): void {
+    if (!this.embedBar) return;
+    const m = this.manifest;
+    let text = '';
+    let warn = false;
+    if (!m) {
+      warn = !!this.manifestError;
+      text = warn ? t('common.loadError') : '';
+    } else if (m.fixture) {
+      warn = true;
+      text = t('embed.dataFixture');
+    } else {
+      warn = Object.values(m.sources).some((s) => sourceState(s) !== 'fresh');
+      text = t('embed.data', { date: fmtTsDate(m.generatedAt) }) + (warn ? ` · ${t('fresh.stale')}` : '');
+    }
+    this.embedBar.classList.toggle('warn', warn);
+    this.embedData.textContent = text;
+    this.embedData.title = text;
+    this.embedOpen.querySelector('.embed-open-text')!.textContent = t('embed.open');
+    this.embedOpen.title = t('embed.openTitle');
+    this.embedOpen.setAttribute('aria-label', t('embed.openTitle'));
+    this.renderEmbedLink();
+  }
+
+  /** Same view + state, no embed flag (language always kept; theme only when the host chose one). */
+  private renderEmbedLink(): void {
+    if (!this.embedBar) return;
+    this.embedOpen.setAttribute('href', `./${openFullHash(this.route, this.params, getLang(), getEmbedState().theme)}`);
   }
 
   private renderShellText(): void {
@@ -130,6 +176,7 @@ export class App {
   }
 
   private renderFreshness(): void {
+    this.renderEmbedBar();
     const textEl = this.fresh.querySelector('.fresh-text')!;
     const m = this.manifest;
     if (!m) {
@@ -170,20 +217,23 @@ export class App {
   // ------------------------------------------------------------------ routing
   private onHash(): void {
     if (!isRouterHash(location.hash)) return; // in-page anchors
-    const { route, params } = parseHash(location.hash);
-    if ('lang' in params) {
-      // ?lang= is consumed at startup; drop it so the toggle stays authoritative.
-      delete params.lang;
-      history.replaceState(history.state, '', buildHash(route, params));
-    }
+    const { route, params: raw } = parseHash(location.hash);
+    // embed/theme/lang are shell params: views never see them. Outside embed mode they are consumed at
+    // startup and dropped from the hash (so the toggles stay authoritative); in embed mode they are
+    // carried across every hash rewrite so shareable state keeps them.
+    if (getEmbedState().embed) this.carry = { ...this.carry, ...pickCarry(raw) };
+    const params = stripCarry(raw);
+    if (carryDiffers(raw, this.carry)) history.replaceState(history.state, '', buildHash(route, { ...this.carry, ...params }));
     if (route === this.route && this.view) {
       this.params = params;
+      this.renderEmbedLink();
       if (this.view.update) this.view.update(params);
       else void this.mountView();
       return;
     }
     this.route = route;
     this.params = params;
+    this.renderEmbedLink();
     void this.mountView(true);
   }
 
@@ -223,6 +273,7 @@ export class App {
   }
 
   private onLang(): void {
+    if (this.carry.lang) this.carry = { ...this.carry, lang: getLang() };
     this.renderShellText();
     this.host?.setLang(getLang());
     void this.mountView();
@@ -231,7 +282,8 @@ export class App {
   /** Update the URL query for the current view without re-rendering (shareable state). */
   setParams(params: Params): void {
     this.params = params;
-    const hash = buildHash(this.route, params);
+    this.renderEmbedLink();
+    const hash = buildHash(this.route, { ...this.carry, ...params });
     if (hash !== location.hash) history.replaceState(history.state, '', hash);
   }
 

@@ -9,6 +9,7 @@ import { errorCard } from '../app';
 import { countryName, fmtDate, fmtNum, getLang, t } from '../i18n';
 import { DataError, loadData } from '../lib/data';
 import { clear, extLink, h, prefersReducedMotion } from '../lib/dom';
+import { isEmbed } from '../lib/embed';
 import { centroidOf, greatCircle, TAIWAN, type LngLat } from '../lib/geo';
 import { icon } from '../lib/icons';
 import { normalizeImportedParams, serializeImportedParams, type AdvLayer, type ImportedParams, type ImportedTab } from '../lib/params';
@@ -219,7 +220,9 @@ export default async function importedView(ctx: ViewContext): Promise<View> {
       if (!playing) app.announce(counter.textContent ?? '');
     },
   }, reduced);
-  anim.rotate = !reduced;
+  // Embedded on someone else's page: no auto-rotation and no autoplay (CPU/battery); Play is up to the user.
+  const calm = reduced || isEmbed();
+  anim.rotate = !calm;
 
   const onPick = (e: MapLayerMouseEvent, hover: boolean, layer: string) => {
     const f = e.features?.[0];
@@ -247,7 +250,7 @@ export default async function importedView(ctx: ViewContext): Promise<View> {
     st.year === null ? 'all' : String(st.year), (v) => {
       st = { ...st, year: v === 'all' ? null : Number(v) };
       update();
-      startTimeline(!reduced);
+      startTimeline(!calm);
     });
   const speedSeg = segmented<'1' | '2' | '4'>(t('map.speed'), [{ value: '1', label: '1×' }, { value: '2', label: '2×' }, { value: '4', label: '4×' }], '1', (v) => (anim.speed = Number(v)));
   playBtn.addEventListener('click', () => (animPlaying ? anim.pause() : anim.play()));
@@ -478,7 +481,7 @@ export default async function importedView(ctx: ViewContext): Promise<View> {
     for (const ev of ['pointerdown', 'wheel', 'touchstart', 'keydown']) canvas.addEventListener(ev, stopRotate, { passive: true });
     cleanup.push(() => { for (const ev of ['pointerdown', 'wheel', 'touchstart', 'keydown']) canvas.removeEventListener(ev, stopRotate); });
   }
-  startTimeline(!reduced && !st.country);
+  startTimeline(!calm && !st.country);
   void loadWorld();
 
   return {

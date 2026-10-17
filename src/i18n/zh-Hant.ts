@@ -33,6 +33,14 @@ export const zhHant = {
   'fresh.title': '資料產生時間 {time}；最新發病日 {date}',
   'fresh.staleTitle': '下列資料來源這次更新失敗，暫用上一版：{list}',
 
+  'embed.open': '登革熱地圖',
+  'embed.openTitle': '在新分頁開啟完整版登革熱地圖',
+  'embed.data': '資料：衛生福利部疾病管制署｜更新 {date}',
+  'embed.dataFixture': '合成示範資料，非真實疫情',
+  'embed.gestureWin': '按住 Ctrl 並捲動滑鼠滾輪來縮放地圖',
+  'embed.gestureMac': '按住 ⌘ 並捲動滑鼠滾輪來縮放地圖',
+  'embed.gestureTouch': '請用兩指移動地圖',
+
   'common.local': '本土',
   'common.imported': '境外移入',
   'common.importedShort': '境外',
