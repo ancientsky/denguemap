@@ -7,13 +7,15 @@
  * stay untouched and the manifest flags it `stale`.  If every source fails
  * nothing is written and the process exits non-zero.
  *
- * Env: DENGUE_BASE_URL (default CDC host), DATA_OUT_DIR (default public/data),
+ * Env: DENGUE_BASE_URL (default CDC host), TRAVEL_BASE_URL (safetravel raw files), DATA_OUT_DIR (default public/data),
  *      DATA_ALLOW_SHRINK=1 (skip the case-count shrink guard).
  */
 import { appendFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { DEFAULT_BASE_URL, REFERENCE_COUNTS, SOURCE_NAMES } from './config.mjs';
+import {
+  DEFAULT_BASE_URL, DEFAULT_TRAVEL_BASE_URL, REFERENCE_COUNTS, SOURCE_NAMES, TRAVEL_MAX_BYTES,
+} from './config.mjs';
 import { loadGeo } from './geo.mjs';
 import { createHttp } from './http.mjs';
 import { buildCases, yearTotals } from './sources/cases.mjs';
@@ -21,10 +23,12 @@ import { buildClustersSource } from './sources/clusters.mjs';
 import { buildImportedSource } from './sources/imported.mjs';
 import { buildNs1Source } from './sources/ns1.mjs';
 import { buildNoticesSource, recentCountriesFromImportedJson } from './sources/notices.mjs';
+import { buildTravelSource } from './sources/travel.mjs';
 import { buildVectorSource } from './sources/vector.mjs';
+import { buildWorldFile } from './world.mjs';
 import { toJson, isoUtc, twDate, parseYmd } from './util.mjs';
 import {
-  computeWarnings, validateCases, validateFileShape, validateImported, validateNs1, validateVector,
+  computeWarnings, validateCases, validateFileShape, validateImported, validateNs1, validateTravel, validateVector,
 } from './validate.mjs';
 import {
   buildManifest, hashFiles, manifestChanged, manifestToJson, readJson, writeIfChanged,
@@ -33,6 +37,7 @@ import {
 /**
  * @typedef {object} Ctx
  * @property {ReturnType<typeof createHttp>} http
+ * @property {ReturnType<typeof createHttp>} travelHttp  safetravel raw files
  * @property {Awaited<ReturnType<typeof loadGeo>>} geo
  * @property {string} todayIso  Taiwan calendar date
  * @property {(msg:string)=>void} log
@@ -52,6 +57,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 /**
  * @param {object} [options]
  * @param {string} [options.baseUrl]
+ * @param {string} [options.travelBaseUrl]
  * @param {string} [options.outDir]
  * @param {Date} [options.now]
  * @param {typeof fetch} [options.fetchImpl]
@@ -73,13 +79,17 @@ export async function run(options = {}) {
   const currentYear = /** @type {{y:number}} */ (parseYmd(todayIso)).y;
   const wanted = (/** @type {string} */ n) => !options.only || options.only.includes(n);
 
+  const travelBaseUrl = options.travelBaseUrl ?? process.env.TRAVEL_BASE_URL ?? DEFAULT_TRAVEL_BASE_URL;
   const http = createHttp({ baseUrl, fetchImpl: options.fetchImpl, backoffMs: options.backoffMs, log });
+  const travelHttp = createHttp({
+    baseUrl: travelBaseUrl, fetchImpl: options.fetchImpl, backoffMs: options.backoffMs, log, maxBytes: TRAVEL_MAX_BYTES,
+  });
   log(`data pipeline: ${todayIso} (Taiwan), base ${baseUrl}, out ${outDir}`);
 
   const prevManifest = await readJson(outDir, 'manifest.json');
 
   /** @type {Promise<Ctx>} */
-  const ctxP = loadGeo(options.atlasLoader ? { atlasLoader: options.atlasLoader } : {}).then((geo) => ({ http, geo, todayIso, log }));
+  const ctxP = loadGeo(options.atlasLoader ? { atlasLoader: options.atlasLoader } : {}).then((geo) => ({ http, travelHttp, geo, todayIso, log }));
   ctxP.catch(() => {});
 
   /**
@@ -157,7 +167,19 @@ export async function run(options = {}) {
     meta: { towns: ctx.geo.towns.length, counties: ctx.geo.counties.length },
   })) : null;
 
-  const settled = await Promise.all([casesP, importedP, noticesP, clustersP, vectorP, ns1P, adminP]);
+  const travelP = wanted('travel') ? guarded('travel', async (ctx) => {
+    const out = await buildTravelSource(ctx);
+    validateTravel(JSON.parse(out.files['travel.json']));
+    return out;
+  }) : null;
+
+  // static: derived from the installed world-atlas package, no network, byte-stable
+  const worldP = wanted('world') ? guarded('world', async () => {
+    const w = await buildWorldFile();
+    return { files: { 'geo/world.topo.json': w.json }, meta: { countries: w.countries, gzip: w.gzip } };
+  }) : null;
+
+  const settled = await Promise.all([casesP, importedP, noticesP, clustersP, vectorP, ns1P, adminP, travelP, worldP]);
   /** @type {Record<string, SourceResult>} */
   const results = {};
   for (const r of settled) if (r) results[r.name] = r;
@@ -196,6 +218,7 @@ export async function run(options = {}) {
       const extra = {};
       if (n === 'vector') { extra.periodStart = m.periodStart; extra.periodEnd = m.periodEnd; }
       if (n === 'ns1') extra.sourceDate = m.sourceDate;
+      if (n === 'travel') extra.updated = m.updated;
       srcInfo[n] = { ok: true, records: m.records, extra };
     } else srcInfo[n] = { ok: false };
   }
@@ -262,7 +285,7 @@ function summarize(/** @type {any} */ meta) {
 async function writeSummary(path, results, manifest, changed, prevManifest, todayIso) {
   if (!path) return;
   const lines = [`### Dengue data pipeline (${todayIso} Taiwan)`, '', '| source | status | records | detail |', '|---|---|---:|---|'];
-  for (const n of [...SOURCE_NAMES, 'admin']) {
+  for (const n of [...SOURCE_NAMES, 'admin', 'world']) {
     const r = results[n];
     if (!r) continue;
     if (r.ok) {
@@ -271,6 +294,7 @@ async function writeSummary(path, results, manifest, changed, prevManifest, toda
         ? `years ${m.years?.[0]}..${m.years?.at(-1)}, latest onset ${m.latestOnset}, dropped ${m.dropped}, points w/o town ${m.nullTown}/${m.uniquePts}`
         : n === 'vector' ? `period ${m.periodStart}..${m.periodEnd}, villCode match ${m.stats?.matched}/${m.stats?.outVillages}`
           : n === 'notices' ? `${m.countries} countries, ${m.failed} failed`
+            : n === 'travel' ? `${m.countries} countries, updated ${m.updated}`
             : '';
       lines.push(`| ${n} | ok | ${m.records ?? m.towns ?? ''} | ${detail} |`);
     } else {

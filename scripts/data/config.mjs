@@ -3,6 +3,27 @@
 
 export const DEFAULT_BASE_URL = 'https://cdcdengue.azurewebsites.net/';
 
+/** Public safetravel data (alerts.json, epidemics.json); override with TRAVEL_BASE_URL. */
+export const DEFAULT_TRAVEL_BASE_URL = 'https://raw.githubusercontent.com/ancientsky/safetravel/main/web/data/';
+/** Hard cap for one safetravel file (epidemics.json is about 1.3 MB). */
+export const TRAVEL_MAX_BYTES = 8 * 1024 * 1024;
+/** travel.json: news window (days) and cap. */
+export const TRAVEL_NEWS_DAYS = 730;
+export const TRAVEL_MAX_NEWS = 300;
+/** travel.json: fewer valid countries than this means the upstream file is broken. */
+export const TRAVEL_MIN_COUNTRIES = 150;
+
+/** Mosquito-borne diseases tracked in travel.json (key order = display order); zh = safetravel's name. */
+export const MOSQUITO_DISEASES = Object.freeze({
+  dengue: Object.freeze({ zh: '登革熱', en: 'Dengue' }),
+  chikungunya: Object.freeze({ zh: '屈公病', en: 'Chikungunya' }),
+  zika: Object.freeze({ zh: '茲卡病毒感染症', en: 'Zika virus' }),
+  yellowFever: Object.freeze({ zh: '黃熱病', en: 'Yellow fever' }),
+  malaria: Object.freeze({ zh: '瘧疾', en: 'Malaria' }),
+  japaneseEncephalitis: Object.freeze({ zh: '日本腦炎', en: 'Japanese encephalitis' }),
+  westNile: Object.freeze({ zh: '西尼羅熱', en: 'West Nile fever' }),
+});
+
 /** Per-request timeout and response cap. */
 export const REQUEST_TIMEOUT_MS = 90_000;
 export const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
@@ -78,4 +99,4 @@ export const WARN_RATIO = 0.8;
 export const SHRINK_TOLERANCE = { rel: 0.02, abs: 5 };
 
 /** Names of the independent sources, in manifest order. */
-export const SOURCE_NAMES = /** @type {const} */ (['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1']);
+export const SOURCE_NAMES = /** @type {const} */ (['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1', 'travel']);

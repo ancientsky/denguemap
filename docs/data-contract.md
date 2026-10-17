@@ -194,3 +194,12 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 ### manifest.sources.travel
 
 `{ "ok", "stale", "fetchedAt", "records"(新聞則數), "updated"(= travel.updated) }`，語意同其他來源。
+
+### v2 實作備註
+
+- `imported.json.events` 同一天同一國的多筆已合併；全部 `events` 的病例數總和等於 `countries.*.byYear` 的總和（manifest `imported.records`）。舊的（尚未重建的）`imported.json` 可能沒有 `events`，前端需容忍。
+- `travel.levels.*.zh` 經 NFKC（全形冒號變半形 `:`），並去掉 safetravel 原文結尾的英文括號（「第一級:注意（Watch）」→「第一級:注意」）。
+- `travel.countries.*.vb[].since` 為建議生效日；來源日期無效時為 `null`。`level` 由有效建議重新計算（不採用來源的 `max_level`）。
+- `travel.news` 的 2 年視窗以台灣日期 `today` 往前 730 天計；`d` 順序固定為 dengue, chikungunya, zika, yellowFever, malaria, japaneseEncephalitis, westNile。
+- 驗證：有效國家 < 150 或缺任一 `levels` 即視為來源失敗（保留前一版 `travel.json`，manifest 標 `stale`）。安全上限：單一檔案 8 MB。環境變數 `TRAVEL_BASE_URL` 可覆寫來源路徑。
+- `geo/world.topo.json` 每次執行都從 `world-atlas`（countries-50m）離線重建（約 0.5 秒，位元組穩定，無變動即不寫檔）；不屬於 manifest 的 `sources`。

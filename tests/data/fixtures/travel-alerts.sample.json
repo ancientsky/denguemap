@@ -1,0 +1,349 @@
+{
+ "generated_at": "2026-10-16T21:17:38+08:00",
+ "levels": {
+  "1": {
+   "zh": "第一級：注意（Watch）",
+   "en": "Level 1: Watch",
+   "instruction_zh": "提醒遵守當地的一般預防措施",
+   "instruction_en": "Practice usual precautions"
+  },
+  "2": {
+   "zh": "第二級：警示（Alert）",
+   "en": "Level 2: Alert",
+   "instruction_zh": "對當地採取加強防護",
+   "instruction_en": "Practice enhanced precautions"
+  },
+  "3": {
+   "zh": "第三級：警告（Warning）",
+   "en": "Level 3: Warning",
+   "instruction_zh": "避免至當地所有非必要旅遊",
+   "instruction_en": "Avoid all non-essential travel"
+  }
+ },
+ "diseases": {
+  "登革熱": {
+   "zh": "登革熱",
+   "en": "Dengue fever"
+  },
+  "瘧疾": {
+   "zh": "瘧疾",
+   "en": "Malaria"
+  }
+ },
+ "global": [
+  {
+   "disease": "新冠併發重症",
+   "level": 1,
+   "effective": "2023-11-01",
+   "countries": 242,
+   "applied_to_all": true
+  }
+ ],
+ "countries": {
+  "AD": {
+   "name_zh": "安道爾",
+   "name_en": "Andorra",
+   "max_level": 1,
+   "alerts": [
+    {
+     "disease": "新冠併發重症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": "",
+     "global": true
+    }
+   ]
+  },
+  "BR": {
+   "name_zh": "巴西",
+   "name_en": "Brazil",
+   "max_level": 2,
+   "alerts": [
+    {
+     "disease": "屈公病",
+     "level": 2,
+     "effective": "2026-08-14",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "登革熱",
+     "level": 2,
+     "effective": "2023-08-22",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "茲卡病毒感染症",
+     "level": 1,
+     "effective": "2026-04-28",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "M痘",
+     "level": 1,
+     "effective": "2025-08-04",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "新冠併發重症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": "",
+     "global": true
+    },
+    {
+     "disease": "黃熱病",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    }
+   ]
+  },
+  "CU": {
+   "name_zh": "古巴",
+   "name_en": "Cuba",
+   "max_level": 2,
+   "alerts": [
+    {
+     "disease": "登革熱",
+     "level": 2,
+     "effective": "2026-08-11",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "新冠併發重症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": "",
+     "global": true
+    },
+    {
+     "disease": "茲卡病毒感染症",
+     "level": 1,
+     "effective": "2021-04-09",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    }
+   ]
+  },
+  "ID": {
+   "name_zh": "印尼",
+   "name_en": "Indonesia",
+   "max_level": 2,
+   "alerts": [
+    {
+     "disease": "麻疹",
+     "level": 2,
+     "effective": "2026-02-03",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "瘧疾",
+     "level": 2,
+     "effective": "2025-08-12",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "登革熱",
+     "level": 1,
+     "effective": "2026-02-03",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "屈公病",
+     "level": 1,
+     "effective": "2024-08-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "新冠併發重症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": "",
+     "global": true
+    },
+    {
+     "disease": "茲卡病毒感染症",
+     "level": 1,
+     "effective": "2016-01-19",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    }
+   ]
+  },
+  "SG": {
+   "name_zh": "新加坡",
+   "name_en": "Singapore",
+   "max_level": 1,
+   "alerts": [
+    {
+     "disease": "登革熱",
+     "level": 1,
+     "effective": "2026-08-11",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "新冠併發重症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": "",
+     "global": true
+    },
+    {
+     "disease": "茲卡病毒感染症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    }
+   ]
+  },
+  "TH": {
+   "name_zh": "泰國",
+   "name_en": "Thailand",
+   "max_level": 1,
+   "alerts": [
+    {
+     "disease": "麻疹",
+     "level": 1,
+     "effective": "2026-05-26",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "M痘",
+     "level": 1,
+     "effective": "2026-05-12",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "登革熱",
+     "level": 1,
+     "effective": "2025-03-24",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "茲卡病毒感染症",
+     "level": 1,
+     "effective": "2024-08-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "瘧疾",
+     "level": 1,
+     "effective": "2024-04-29",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "新冠併發重症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": "",
+     "global": true
+    }
+   ]
+  },
+  "VN": {
+   "name_zh": "越南",
+   "name_en": "Vietnam",
+   "max_level": 2,
+   "alerts": [
+    {
+     "disease": "登革熱",
+     "level": 2,
+     "effective": "2026-02-03",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "麻疹",
+     "level": 2,
+     "effective": "2025-02-03",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "M痘",
+     "level": 1,
+     "effective": "2026-06-09",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "新冠併發重症",
+     "level": 1,
+     "effective": "2023-11-01",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": "",
+     "global": true
+    },
+    {
+     "disease": "新型A型流感",
+     "level": 1,
+     "effective": "2022-10-24",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    },
+    {
+     "disease": "茲卡病毒感染症",
+     "level": 1,
+     "effective": "2022-04-12",
+     "area_zh": "",
+     "area_en": "",
+     "iso_sub": ""
+    }
+   ]
+  }
+ },
+ "unmapped": []
+}

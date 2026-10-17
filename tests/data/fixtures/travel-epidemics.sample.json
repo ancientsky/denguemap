@@ -1,0 +1,118 @@
+{
+ "generated_at": "2026-10-16T21:17:38+08:00",
+ "window_start": "2024-10-16",
+ "items": [
+  {
+   "id": "DAqX4O2HjsfzJesbSDg7Jw",
+   "date": "2026-09-29",
+   "disease_zh": "登革熱",
+   "disease_en": "Dengue fever",
+   "headline_zh": "越南-登革熱",
+   "headline_en": "Viet Nam – Dengue",
+   "summary_zh": "胡志明市今年34,161例登革熱,第38週新增1,462例,高於去年同期。",
+   "summary_en": "Ho Chi Minh City has reported 34,161 dengue cases this year as of week 38, with 1,462 in week 38 alone, higher than the same period last year.",
+   "countries": [
+    "VN"
+   ],
+   "area_zh": "越南",
+   "area_en": "Vietnam",
+   "url": "https://www.cdc.gov.tw/TravelEpidemic/Detail/G3PSay_dafdAwjsYNm3CCA?epidemicId=DAqX4O2HjsfzJesbSDg7Jw",
+   "ai": true,
+   "has_full": true
+  },
+  {
+   "id": "IXqaJo2xrxKa4nnavTjD0w",
+   "date": "2026-10-13",
+   "disease_zh": "登革熱",
+   "disease_en": "Dengue fever",
+   "headline_zh": "孟加拉/古巴-登革熱",
+   "headline_en": "Bangladesh / Cuba – Dengue",
+   "summary_zh": "孟加拉今年累計住院9萬9,275例、303例死亡;古巴病例為預期9.2倍",
+   "summary_en": "Bangladesh has reported 99,275 cumulative hospitalized dengue cases and 303 deaths this year, and Cuba's cases are 9.2 times expected levels.",
+   "countries": [
+    "BD",
+    "CU",
+    "US"
+   ],
+   "area_zh": "孟加拉,古巴,美國",
+   "area_en": "Bangladesh,Cuba,USA",
+   "url": "https://www.cdc.gov.tw/TravelEpidemic/Detail/G3PSay_dafdAwjsYNm3CCA?epidemicId=IXqaJo2xrxKa4nnavTjD0w",
+   "ai": true,
+   "has_full": true
+  },
+  {
+   "id": "AyPDEfg3XPtp5UqsQdWVGQ",
+   "date": "2026-07-02",
+   "disease_zh": "登革熱,屈公病,瘧疾,黃熱病,茲卡病毒感染症,麻疹,白喉,百日咳",
+   "disease_en": "Dengue fever, Chikungunya, Malaria, Yellow fever, Zika virus infection, Measles, Diphtheria, Pertussis (whooping cough)",
+   "headline_zh": "委內瑞拉-麻疹等震災後傳染病",
+   "headline_en": "Venezuela – Communicable disease risks after earthquake",
+   "summary_zh": "委內瑞拉6/24大地震後,WHO警告麻疹、登革熱等傳染病風險上升",
+   "summary_en": "After a 24 June earthquake in Venezuela, WHO warned of rising risks for measles, dengue, yellow fever, malaria and other communicable diseases amid low vaccination coverage.",
+   "countries": [
+    "VE"
+   ],
+   "area_zh": "委內瑞拉",
+   "area_en": "Venezuela",
+   "url": "https://www.cdc.gov.tw/TravelEpidemic/Detail/G3PSay_dafdAwjsYNm3CCA?epidemicId=AyPDEfg3XPtp5UqsQdWVGQ",
+   "ai": true,
+   "has_full": true
+  },
+  {
+   "id": "Y1rWSPKbWxuqS0UWdvP1XA",
+   "date": "2026-09-22",
+   "disease_zh": "屈公病",
+   "disease_en": "Chikungunya",
+   "headline_zh": "中國-屈公病",
+   "headline_en": "China – Chikungunya",
+   "summary_zh": "廣東省今年4–8月屈公病736例,8月496例,逐月上升,但遠低於去年同期。",
+   "summary_en": "Guangdong, China reported 736 chikungunya cases from April to August this year, rising monthly but well below last year's levels.",
+   "countries": [
+    "CN"
+   ],
+   "area_zh": "中國大陸",
+   "area_en": "China",
+   "url": "https://www.cdc.gov.tw/TravelEpidemic/Detail/G3PSay_dafdAwjsYNm3CCA?epidemicId=Y1rWSPKbWxuqS0UWdvP1XA",
+   "ai": true,
+   "has_full": true
+  },
+  {
+   "id": "OuKZbFu3PtOG7mjj0_zJuQ",
+   "date": "2026-10-15",
+   "disease_zh": "白喉",
+   "disease_en": "Diphtheria",
+   "headline_zh": "美國/奈及利亞-白喉",
+   "headline_en": "United States / Nigeria – Diphtheria",
+   "summary_zh": "奈及利亞今年逾2.6萬例疑似病例、700例死亡;美國紐約州出現旅遊相關病例",
+   "summary_en": "Nigeria reported over 26,000 suspected diphtheria cases and 700 deaths this year; New York's Erie County reported a travel-related case.",
+   "countries": [
+    "NG",
+    "US"
+   ],
+   "area_zh": "奈及利亞,美國",
+   "area_en": "USA Nigeria",
+   "url": "https://www.cdc.gov.tw/TravelEpidemic/Detail/G3PSay_dafdAwjsYNm3CCA?epidemicId=OuKZbFu3PtOG7mjj0_zJuQ",
+   "ai": true,
+   "has_full": true
+  },
+  {
+   "id": "dAT_vx9BRnU-7cTwcLwW-A",
+   "date": "2026-09-30",
+   "disease_zh": "",
+   "disease_en": "",
+   "headline_zh": "歐洲/南非-呼吸道疾病",
+   "headline_en": "Europe / South Africa – Respiratory diseases",
+   "summary_zh": "歐洲第38週新冠陽性率升至15%,南非流感陽性率9%,以B型為主。",
+   "summary_en": "Europe's COVID-19 positivity rose to 15% in week 38, while South Africa's influenza positivity was 9%, mainly influenza B in recent weeks.",
+   "countries": [
+    "ZA"
+   ],
+   "area_zh": "南非",
+   "area_en": "South Africa",
+   "url": "https://www.cdc.gov.tw/TravelEpidemic/Detail/G3PSay_dafdAwjsYNm3CCA?epidemicId=dAT_vx9BRnU-7cTwcLwW-A",
+   "ai": true,
+   "has_full": true
+  }
+ ],
+ "overviews": {}
+}

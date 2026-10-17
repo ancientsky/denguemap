@@ -85,7 +85,19 @@ export function buildImported(rows, todayIso) {
     for (const v of e.byYear.values()) records += v;
     if (e.recent > 0) recent.push({ cc, zh });
   }
-  const data = { from: dates[0], to: dates[dates.length - 1], countries };
+  // one entry per (day, country): [dayIndex since `from`, cc, cases that day]
+  const from = dates[0];
+  const fromDay = daysFromIso(from);
+  /** @type {Map<string, number>} */
+  const perDay = new Map();
+  for (const r of rows) {
+    const k = `${String(daysFromIso(r.date) - fromDay).padStart(6, '0')}|${r.cc}`;
+    perDay.set(k, (perDay.get(k) ?? 0) + r.count);
+  }
+  const events = [...perDay.entries()]
+    .sort((a, b) => cmp(a[0], b[0]))
+    .map(([k, n]) => { const [d, cc] = k.split('|'); return [Number(d), cc, n]; });
+  const data = { from, to: dates[dates.length - 1], countries, events };
   return { json: toJson(data), data, records, recent };
 }
 
@@ -98,6 +110,6 @@ export async function buildImportedSource(ctx) {
   const out = buildImported(rows, ctx.todayIso);
   return {
     files: { 'imported.json': out.json },
-    meta: { records: out.records, dropped, input: Array.isArray(raw) ? raw.length : 0, countries: Object.keys(out.data.countries).length, recent: out.recent },
+    meta: { records: out.records, events: out.data.events.length, dropped, input: Array.isArray(raw) ? raw.length : 0, countries: Object.keys(out.data.countries).length, recent: out.recent },
   };
 }

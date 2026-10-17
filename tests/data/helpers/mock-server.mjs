@@ -9,6 +9,20 @@ import {
 } from '../fixtures/samples.mjs';
 
 const require = createRequire(import.meta.url);
+const readFixture = (name) => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
+
+/** safetravel alerts.json stand-in: the trimmed sample padded with synthetic countries up to `n`. */
+export function travelAlerts(n = 160) {
+  const a = readFixture('travel-alerts.sample.json');
+  const filler = a.countries.AD;
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  for (let i = 0; Object.keys(a.countries).length < n; i++) {
+    const cc = letters[Math.floor(i / 26) % 26] + letters[i % 26];
+    if (!(cc in a.countries) && cc[0] !== 'A') a.countries[cc] = filler;
+  }
+  return a;
+}
+export const travelEpidemics = () => readFixture('travel-epidemics.sample.json');
 
 /** Points known to be inside Taiwan (lng, lat). */
 const POINTS = [
@@ -70,7 +84,7 @@ function ns1Body() {
 }
 
 /**
- * @param {{todayIso?: string, fail?: Set<string>, mutate?: (method:string, body:any, data:any)=>any, nsAsLiteral?: boolean}} [opts]
+ * @param {{travelAlerts?: any, travelEpidemics?: any, todayIso?: string, fail?: Set<string>, mutate?: (method:string, body:any, data:any)=>any, nsAsLiteral?: boolean}} [opts]
  */
 export async function startMockServer(opts = {}) {
   const todayIso = opts.todayIso ?? '2026-10-14';
@@ -110,6 +124,8 @@ export async function startMockServer(opts = {}) {
         if (state.mutate) data = state.mutate(method, body, data);
         return send(200, JSON.stringify({ d: data === null ? null : JSON.stringify(data) }));
       }
+      if (req.method === 'GET' && path === '/travel/alerts.json') return send(200, JSON.stringify(opts.travelAlerts ?? travelAlerts()));
+      if (req.method === 'GET' && path === '/travel/epidemics.json') return send(200, JSON.stringify(opts.travelEpidemics ?? travelEpidemics()));
       if (req.method === 'GET' && path === '/data/geojson/cdcdengueVillagePoint.json') return send(200, JSON.stringify(vector));
       if (req.method === 'GET' && path.startsWith('/data/ns1/')) return send(200, opts.nsAsLiteral ? JSON.stringify(ns1) : ns1, 'text/plain; charset=utf-8');
       return send(404, 'not found', 'text/plain');

@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { run } from '../../scripts/data/run.mjs';
-import { startMockServer } from './helpers/mock-server.mjs';
+import { startMockServer, travelAlerts } from './helpers/mock-server.mjs';
 
 const NOW = new Date('2026-10-16T04:00:00Z'); // 12:00 Taiwan
 const LATER = new Date('2026-10-16T07:00:00Z'); // same Taiwan day
 
 let server, dir;
-const common = () => ({ baseUrl: server.baseUrl, outDir: dir, backoffMs: 0, log: () => {}, reference: null, summaryPath: null });
+const common = () => ({ baseUrl: server.baseUrl, travelBaseUrl: `${server.baseUrl}travel/`, outDir: dir, backoffMs: 0, log: () => {}, reference: null, summaryPath: null });
 const read = async (p) => JSON.parse(await readFile(join(dir, p), 'utf8'));
 const snapshot = async (root = dir, prefix = '') => {
   const out = {};
@@ -33,19 +33,28 @@ describe('pipeline end to end (mock backend)', () => {
     const files = Object.keys(await snapshot()).sort();
     const years = Array.from({ length: 29 }, (_, i) => `cases/${1998 + i}.json`);
     expect(files).toEqual([
-      'clusters.json', ...years, 'geo/admin.topo.json', 'geo/vector-villages.topo.json', 'imported.json',
-      'manifest.json', 'notices.json', 'ns1.json', 'summary.json', 'trend.json', 'vector.json',
+      'clusters.json', ...years, 'geo/admin.topo.json', 'geo/vector-villages.topo.json', 'geo/world.topo.json', 'imported.json',
+      'manifest.json', 'notices.json', 'ns1.json', 'summary.json', 'travel.json', 'trend.json', 'vector.json',
     ].sort());
 
     const m = await read('manifest.json');
     expect(m.schema).toBe(1);
     expect(m.years).toHaveLength(29);
-    for (const n of ['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1']) {
+    for (const n of ['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1', 'travel']) {
       expect(m.sources[n]).toMatchObject({ ok: true, stale: false });
     }
     expect(m.sources.vector).toMatchObject({ periodStart: '2026-09-06', periodEnd: '2026-10-10' });
     expect(m.sources.ns1.sourceDate).toBe('2016-06-03');
     expect(m.sources.ns1.records).toBe(1100);
+    expect(m.sources.travel).toMatchObject({ ok: true, stale: false, records: 4, updated: '2026-10-16T21:17:38+08:00' });
+    const imp = await read('imported.json');
+    expect(imp.events.reduce((a, e) => a + e[2], 0)).toBe(m.sources.imported.records);
+    expect(imp.events.length).toBeGreaterThan(0);
+    const travel = await read('travel.json');
+    expect(Object.keys(travel.countries).length).toBeGreaterThanOrEqual(150);
+    expect(travel.countries.vn.vb.map((v) => v.d)).toEqual(['dengue', 'zika']);
+    const world = await read('geo/world.topo.json');
+    expect(world.objects.countries.geometries.map((g) => g.properties.iso2)).toEqual(expect.arrayContaining(['sg', 'mv', 'tw']));
     expect(Object.keys(m.files)).toHaveLength(files.length - 1);
     expect(m.latestOnset).toBe((await read('summary.json')).latestOnset);
     // the mock data is far below the historical reference -> warnings, in deterministic order
@@ -95,6 +104,24 @@ describe('pipeline end to end (mock backend)', () => {
     expect(m.sources.clusters).toMatchObject({ ok: false, stale: true, fetchedAt: m0.sources.clusters.fetchedAt });
     expect(m.sources.cases.stale).toBe(false);
     expect(m.files).toEqual(m0.files);
+  });
+
+  it('a broken travel source (too few countries) is stale and keeps travel.json', async () => {
+    const before = await snapshot();
+    const bad = travelAlerts(20);
+    const bad2 = await startMockServer({ travelAlerts: bad });
+    try {
+      const r = await run({ ...common(), travelBaseUrl: `${bad2.baseUrl}travel/`, now: new Date('2026-10-16T08:00:00Z') });
+      expect(r.results.travel.ok).toBe(false);
+      expect(r.results.travel.error).toMatch(/only 20 countries/);
+      expect(r.exitCode).toBe(0);
+    } finally { await bad2.close(); }
+    const after = await snapshot();
+    expect(after['travel.json']).toBe(before['travel.json']);
+    expect(JSON.parse(after['manifest.json']).sources.travel).toMatchObject({ ok: false, stale: true, updated: '2026-10-16T21:17:38+08:00' });
+    // heal: the next run with a good upstream clears the flag
+    const r2 = await run({ ...common(), now: new Date('2026-10-16T08:30:00Z') });
+    expect(r2.results.travel.ok).toBe(true);
   });
 
   it('recovers on the next good run', async () => {

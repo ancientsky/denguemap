@@ -4,7 +4,7 @@
  * a throw makes the whole source "stale" (previous files are kept).
  */
 import {
-  BBOX, FIRST_YEAR, IMPORTED_REFERENCE, REFERENCE_COUNTS, SHRINK_TOLERANCE, WARN_RATIO,
+  BBOX, FIRST_YEAR, IMPORTED_REFERENCE, MOSQUITO_DISEASES, REFERENCE_COUNTS, SHRINK_TOLERANCE, TRAVEL_MAX_NEWS, TRAVEL_MIN_COUNTRIES, WARN_RATIO,
 } from './config.mjs';
 import { daysFromIso } from './util.mjs';
 
@@ -81,6 +81,16 @@ export function validateImported(meta, prevRecords) {
   if (prevRecords) ensure(meta.records >= prevRecords - allowedShrink(prevRecords), `imported shrank: ${meta.records} < ${prevRecords}`);
 }
 
+/**
+ * A travel.json that looks truncated or emptied is an upstream failure (keep the previous file).
+ * @param {{levels?:Record<string,unknown>, countries?:Record<string,unknown>}} data
+ */
+export function validateTravel(data) {
+  for (const k of ['1', '2', '3']) ensure(!!data.levels?.[k], `travel: level ${k} missing`);
+  const n = Object.keys(data.countries ?? {}).length;
+  ensure(n >= TRAVEL_MIN_COUNTRIES, `travel: only ${n} countries (need ${TRAVEL_MIN_COUNTRIES})`);
+}
+
 /** @param {{records:number}} meta */
 export function validateNs1(meta) {
   ensure(meta.records >= 1000, `ns1: only ${meta.records} hospitals`);
@@ -144,6 +154,18 @@ export function validateFileShape(path, text) {
     for (const [cc, c] of Object.entries(j.countries)) {
       if (!/^[a-z]{2}$/.test(cc) || typeof (/** @type {any} */ (c)).zh !== 'string') err(`bad country ${cc}`);
     }
+    if (j.events !== undefined) {
+      if (!Array.isArray(j.events)) err('events not an array');
+      const span = daysFromIso(j.to) - daysFromIso(j.from);
+      let last = '';
+      for (const e of j.events) {
+        if (!Array.isArray(e) || e.length !== 3 || !isInt(e[0]) || e[0] < 0 || e[0] > span || typeof e[1] !== 'string' || !/^[a-z]{2}$/.test(e[1]) || !isInt(e[2]) || e[2] < 1) err('bad event');
+        if (!(e[1] in j.countries)) err(`event for unknown country ${e[1]}`);
+        const k = `${String(e[0]).padStart(6, '0')}|${e[1]}`;
+        if (k <= last) err('events not sorted / unique');
+        last = k;
+      }
+    }
   } else if (path === 'notices.json') {
     for (const [cc, list] of Object.entries(j)) {
       if (!/^[a-z]{2}$/.test(cc) || !Array.isArray(list) || list.length > 5) err(`bad country ${cc}`);
@@ -171,6 +193,38 @@ export function validateFileShape(path, text) {
   } else if (path === 'ns1.json') {
     if (!isDate(j.sourceDate) || !Array.isArray(j.h)) err('bad header');
     for (const h of j.h) if (!Array.isArray(h) || h.length !== 7 || !isNum(h[3]) || !isNum(h[4]) || !inBbox(h[3], h[4])) err('bad hospital');
+  } else if (path === 'travel.json') {
+    if (typeof j.updated !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(j.updated)) err('bad updated');
+    for (const k of ['1', '2', '3']) {
+      const l = j.levels?.[k];
+      if (!l || ['zh', 'en', 'adviceZh', 'adviceEn'].some((f) => typeof l[f] !== 'string' || !l[f])) err(`bad level ${k}`);
+    }
+    if (JSON.stringify(Object.keys(j.diseases ?? {})) !== JSON.stringify(Object.keys(MOSQUITO_DISEASES))) err('bad diseases');
+    for (const [cc, c] of Object.entries(j.countries ?? {})) {
+      const x = /** @type {any} */ (c);
+      if (!/^[a-z]{2}$/.test(cc) || typeof x.zh !== 'string' || typeof x.en !== 'string' || ![1, 2, 3].includes(x.level) || !Array.isArray(x.vb)) err(`bad country ${cc}`);
+      for (const a of x.vb) {
+        if (!(a.d in MOSQUITO_DISEASES) || ![1, 2, 3].includes(a.level) || (a.since !== null && !isDate(a.since)) || typeof a.areaZh !== 'string' || typeof a.areaEn !== 'string') err(`bad vb alert ${cc}`);
+      }
+    }
+    if (!Array.isArray(j.news) || j.news.length > TRAVEL_MAX_NEWS) err('bad news');
+    let prev = '9999-99-99';
+    for (const n of j.news) {
+      if (typeof n.id !== 'string' || !isDate(n.date) || n.date > prev) err('bad news item / order');
+      prev = n.date;
+      if (!Array.isArray(n.d) || n.d.length === 0 || n.d.some((/** @type {string} */ k) => !(k in MOSQUITO_DISEASES))) err('bad news diseases');
+      if (!Array.isArray(n.countries) || n.countries.some((/** @type {unknown} */ c) => typeof c !== 'string' || !/^[a-z]{2}$/.test(c))) err('bad news countries');
+      for (const f of ['headlineZh', 'headlineEn', 'summaryZh', 'summaryEn']) if (typeof n[f] !== 'string' || Array.from(n[f]).length > 600) err('bad news text');
+      if (n.url !== null && !(typeof n.url === 'string' && n.url.startsWith('https://www.cdc.gov.tw/'))) err('bad news url');
+    }
+  } else if (path === 'geo/world.topo.json') {
+    if (j.type !== 'Topology' || !Array.isArray(j.arcs) || !Array.isArray(j.objects?.countries?.geometries)) err('not a world topology');
+    const codes = new Set();
+    for (const g of j.objects.countries.geometries) {
+      if (typeof g.properties?.iso2 !== 'string' || !/^[a-z]{2}$/.test(g.properties.iso2) || g.properties.iso2 === 'aq' || codes.has(g.properties.iso2)) err('bad iso2');
+      codes.add(g.properties.iso2);
+    }
+    for (const k of ['sg', 'mv', 'tw']) if (!codes.has(k)) err(`${k} missing`);
   } else if (path.endsWith('.topo.json')) {
     if (j.type !== 'Topology' || typeof j.objects !== 'object' || !Array.isArray(j.arcs)) err('not a topology');
   } else {

@@ -84,7 +84,8 @@ describe('manifest + writes', () => {
   const sources = (over = {}) => ({
     cases: { ok: true, records: 105232 }, imported: { ok: true, records: 894 }, notices: { ok: true, records: 40 },
     clusters: { ok: true, records: 0 }, vector: { ok: true, records: 318, extra: { periodStart: '2026-09-06', periodEnd: '2026-10-10' } },
-    ns1: { ok: true, records: 2316, extra: { sourceDate: '2016-06-03' } }, ...over,
+    ns1: { ok: true, records: 2316, extra: { sourceDate: '2016-06-03' } },
+    travel: { ok: true, records: 261, extra: { updated: '2026-10-16T21:17:38+08:00' } }, ...over,
   });
   const base = buildManifest({ now, prev: null, sources: sources(), latestOnset: '2026-10-14', years: ['1998', '1999'], files: { 'a.json': '11111111' } });
 
@@ -93,7 +94,8 @@ describe('manifest + writes', () => {
     expect(base.generatedAt).toBe('2026-10-16T12:00:00Z');
     expect(base.years).toEqual([1998, 1999]);
     expect(base.sources.vector).toEqual({ ok: true, stale: false, fetchedAt: '2026-10-16T12:00:00Z', records: 318, periodStart: '2026-09-06', periodEnd: '2026-10-10' });
-    expect(Object.keys(base.sources)).toEqual(['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1']);
+    expect(base.sources.travel).toEqual({ ok: true, stale: false, fetchedAt: '2026-10-16T12:00:00Z', records: 261, updated: '2026-10-16T21:17:38+08:00' });
+    expect(Object.keys(base.sources)).toEqual(['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1', 'travel']);
   });
   it('failed sources keep their old fetchedAt/records and become stale', () => {
     const later = new Date('2026-10-16T15:00:00Z');

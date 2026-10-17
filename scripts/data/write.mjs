@@ -10,8 +10,8 @@ import { cmp, sha8, toJson } from './util.mjs';
 /** Files the pipeline is allowed to publish (see docs/data-contract.md). */
 export const FILE_PATTERNS = [
   /^cases\/\d{4}\.json$/,
-  /^(trend|summary|imported|notices|vector|clusters|ns1)\.json$/,
-  /^geo\/(admin|vector-villages)\.topo\.json$/,
+  /^(trend|summary|imported|notices|vector|clusters|ns1|travel)\.json$/,
+  /^geo\/(admin|vector-villages|world)\.topo\.json$/,
 ];
 export const isContractFile = (/** @type {string} */ p) => FILE_PATTERNS.some((re) => re.test(p));
 

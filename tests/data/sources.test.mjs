@@ -29,6 +29,35 @@ describe('imported', () => {
     expect(out.recent).toEqual([{ cc: 'vn', zh: '越南' }]); // ph 2023 and id 2024 are older than 365 days
     validateFileShape('imported.json', out.json);
   });
+  it('emits per-day events [dayIndex from `from`, cc, cases], merged, sorted and deterministic', () => {
+    const extra = [
+      { sickdate: '2026/03/02', country_code: 'vn', country_name: '越南', count: 3 }, // same day+country as a fixture row -> merged
+      { sickdate: '2026/03/02', country_code: 'ph', country_name: '菲律賓', count: 1 },
+      { sickdate: '2023/01/01', country_code: 'id', country_name: '印尼', count: 2 },
+    ];
+    const run = (recs) => buildImported(normalizeImported(recs).rows, today);
+    const out = run([...IMPORTED_RECORDS, ...extra]);
+    const day = (iso) => Math.round((Date.parse(iso) - Date.parse('2023-01-01')) / 86400000);
+    expect(out.data.events).toEqual([
+      [0, 'id', 2], [0, 'ph', 1], [day('2024-05-02'), 'id', 1], [day('2026-03-02'), 'ph', 1], [day('2026-03-02'), 'vn', 4], [day('2026-09-20'), 'vn', 2],
+    ]);
+    expect(out.data.events.reduce((a, e) => a + e[2], 0)).toBe(out.records);
+    expect(out.data.events.at(-1)[0]).toBe(day(out.data.to));
+    expect(out.json).toBe(run([...extra, ...[...IMPORTED_RECORDS].reverse()]).json); // input order does not matter
+    expect(Object.keys(out.data)).toEqual(['from', 'to', 'countries', 'events']);
+    validateFileShape('imported.json', out.json);
+  });
+  it('validateFileShape rejects bad events', () => {
+    const ok = { from: '2023-01-01', to: '2023-01-10', countries: { vn: { zh: 'x' } } };
+    const shape = (events) => () => validateFileShape('imported.json', JSON.stringify({ ...ok, events }));
+    expect(shape([[0, 'vn', 1], [3, 'vn', 2]])).not.toThrow();
+    expect(shape([[3, 'vn', 1], [0, 'vn', 1]])).toThrow(/sorted/);
+    expect(shape([[0, 'vn', 1], [0, 'vn', 1]])).toThrow(/sorted/);
+    expect(shape([[10, 'vn', 1]])).toThrow(/bad event/);
+    expect(shape([[0, 'VN', 1]])).toThrow(/bad event/);
+    expect(shape([[0, 'th', 1]])).toThrow(/unknown country/);
+    expect(shape([[0, 'vn', 0]])).toThrow(/bad event/);
+  });
   it('rejects non-arrays and empty results', () => {
     expect(() => normalizeImported({})).toThrow();
     expect(() => buildImported([], today)).toThrow(/no usable/);
