@@ -24,6 +24,8 @@ export interface CaseFilter {
 export interface CaseAggregate {
   /** ptIndex → [local, imported] */
   byPt: Map<number, [number, number]>;
+  /** ptIndex → latest onset day-of-year in range */
+  lastDay: Map<number, number>;
   /** townCode → [local, imported] */
   byTown: Map<string, [number, number]>;
   total: LI;
@@ -31,6 +33,7 @@ export interface CaseAggregate {
 
 export function aggregateCases(file: CasesYear, f: CaseFilter): CaseAggregate {
   const byPt = new Map<number, [number, number]>();
+  const lastDay = new Map<number, number>();
   const byTown = new Map<string, [number, number]>();
   const total = { local: 0, imported: 0 };
   const { c, pts } = file;
@@ -44,6 +47,7 @@ export function aggregateCases(file: CasesYear, f: CaseFilter): CaseAggregate {
     let a = byPt.get(p);
     if (!a) byPt.set(p, (a = [0, 0]));
     a[imp] += n;
+    lastDay.set(p, d); // rows are sorted by day, so the last write is the latest onset
     if (town) {
       let t = byTown.get(town);
       if (!t) byTown.set(town, (t = [0, 0]));
@@ -52,7 +56,7 @@ export function aggregateCases(file: CasesYear, f: CaseFilter): CaseAggregate {
     if (imp) total.imported += n;
     else total.local += n;
   }
-  return { byPt, byTown, total };
+  return { byPt, lastDay, byTown, total };
 }
 
 /** Daily totals for the year (index 0 = day 1) for a case type — used by the range slider sparkline. */
@@ -176,4 +180,15 @@ export function niceBreaks(max: number): number[] {
     if (v > out[out.length - 1]! && v <= max) out.push(Math.round(v));
   }
   return out;
+}
+
+/**
+ * Recency bucket of an onset relative to a reference date (old CDC map colouring):
+ * 0: ≤ 7 days, 1: 8–14, 2: 15–30, 3: > 30 days. Negative ages (onset after reference) count as 0.
+ */
+export function recencyBucket(daysAgo: number): 0 | 1 | 2 | 3 {
+  if (daysAgo <= 7) return 0;
+  if (daysAgo <= 14) return 1;
+  if (daysAgo <= 30) return 2;
+  return 3;
 }

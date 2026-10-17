@@ -136,3 +136,44 @@ export function notice(texts: string[]): HTMLElement | null {
 export function unavailableState(): HTMLElement {
   return h('div', { class: 'empty-state', role: 'status' }, icon('clock'), h('p', { class: 'empty-body' }, t('warn.unavailable')));
 }
+
+export interface TabSpec<T extends string> {
+  id: T;
+  label: string;
+}
+/** Accessible tabs (roving tabindex, arrow keys). Returns the tab bar, a panel per tab and select(). */
+export function tabs<T extends string>(label: string, items: TabSpec<T>[], active: T, onChange: (id: T) => void): { bar: HTMLElement; panels: Record<T, HTMLElement>; select(id: T): void } {
+  const base = nextId('tab');
+  const panels = {} as Record<T, HTMLElement>;
+  const btns: HTMLButtonElement[] = [];
+  const select = (id: T, focus = false) => {
+    items.forEach((it, i) => {
+      const on = it.id === id;
+      const b = btns[i]!;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+      panels[it.id].hidden = !on;
+      if (on && focus) b.focus();
+    });
+  };
+  items.forEach((it, i) => {
+    const b = h('button', { type: 'button', role: 'tab', id: `${base}-${it.id}`, 'aria-controls': `${base}-p-${it.id}`, class: 'tab',
+      on: {
+        click: () => { select(it.id); onChange(it.id); },
+        keydown: (e) => {
+          const k = (e as KeyboardEvent).key;
+          const d = k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : 0;
+          if (!d) return;
+          e.preventDefault();
+          const next = items[(i + d + items.length) % items.length]!;
+          select(next.id, true);
+          onChange(next.id);
+        },
+      } }, it.label);
+    btns.push(b);
+    panels[it.id] = h('div', { role: 'tabpanel', id: `${base}-p-${it.id}`, 'aria-labelledby': `${base}-${it.id}`, class: 'tabpanel' });
+  });
+  const bar = h('div', { role: 'tablist', 'aria-label': label, class: 'tabs' }, ...btns);
+  select(active);
+  return { bar, panels, select: (id) => select(id) };
+}

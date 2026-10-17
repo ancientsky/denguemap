@@ -6,6 +6,8 @@ export type CaseType = 'local' | 'imported' | 'all';
 export const CASE_TYPES: readonly CaseType[] = ['local', 'imported', 'all'];
 export type MapMode = 'points' | 'heat' | 'towns';
 export const MAP_MODES: readonly MapMode[] = ['points', 'heat', 'towns'];
+export type ColorBy = 'recency' | 'type';
+export const COLOR_BY: readonly ColorBy[] = ['recency', 'type'];
 
 export function clampInt(v: string | undefined, min: number, max: number, def: number): number {
   if (v == null || !/^-?\d{1,9}$/.test(v.trim())) return def;
@@ -37,6 +39,10 @@ export interface MapParams {
   to: number;
   mode: MapMode;
   ns1: boolean;
+  /** case colouring: days since onset (default) or local/imported */
+  color: ColorBy;
+  /** mosquito-risk village overlay */
+  mv: boolean;
 }
 export interface MapCtx {
   years: readonly number[];
@@ -61,6 +67,8 @@ export function normalizeMapParams(raw: Params, ctx: MapCtx): MapParams {
     to,
     mode: oneOf(raw.mode, MAP_MODES, 'points'),
     ns1: raw.ns1 === '1',
+    color: oneOf(raw.color, COLOR_BY, 'recency'),
+    mv: raw.mv === '1',
   };
 }
 
@@ -76,6 +84,8 @@ export function serializeMapParams(p: MapParams, ctx: MapCtx): Params {
   if (p.to !== maxDoy) out.to = String(p.to);
   if (p.mode !== 'points') out.mode = p.mode;
   if (p.ns1) out.ns1 = '1';
+  if (p.color !== 'recency') out.color = p.color;
+  if (p.mv) out.mv = '1';
   return out;
 }
 
@@ -136,16 +146,20 @@ export function serializeTrendParams(p: TrendParams, firstYear: number, lastYear
 }
 
 // ---------------------------------------------------------------- imported view
+export type ImportedTab = 'rank' | 'adv' | 'news';
+export type AdvLayer = 'vb' | 'all' | 'off';
 export interface ImportedParams {
   year: number | null; // null = all years
   country: string | null;
+  tab: ImportedTab;
+  adv: AdvLayer;
 }
 export function normalizeImportedParams(raw: Params, years: readonly number[], countries: ReadonlySet<string>): ImportedParams {
   const y = raw.year === 'all' ? null : clampInt(raw.year, -1, 9999, -1);
   const latest = years.length ? Math.max(...years) : null;
   const year = y === null ? null : years.includes(y) ? y : latest;
   const cc = raw.country && /^[a-z]{2}$/.test(raw.country) && countries.has(raw.country) ? raw.country : null;
-  return { year, country: cc };
+  return { year, country: cc, tab: oneOf(raw.tab, ['rank', 'adv', 'news'] as const, 'rank'), adv: oneOf(raw.adv, ['vb', 'all', 'off'] as const, 'vb') };
 }
 export function serializeImportedParams(p: ImportedParams, years: readonly number[]): Params {
   const out: Params = {};
@@ -153,5 +167,7 @@ export function serializeImportedParams(p: ImportedParams, years: readonly numbe
   if (p.year === null) out.year = 'all';
   else if (p.year !== latest) out.year = String(p.year);
   if (p.country) out.country = p.country;
+  if (p.tab !== 'rank') out.tab = p.tab;
+  if (p.adv !== 'vb') out.adv = p.adv;
   return out;
 }

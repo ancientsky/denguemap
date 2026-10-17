@@ -15,18 +15,25 @@ import type { CasesYear, NS1, Summary } from '../lib/types';
 import { validateCases, validateNS1, validateSummary } from '../lib/validate';
 import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
 import { readPalette } from '../map/palette';
+import { addCountBadge, addNs1Icon, addRiskSquares } from '../map/images';
+import { caseFeatures, casePaint, casePopup, caseSortKey, recencyLegend, type ColorMode } from './caseLayer';
 import { dualRange } from './range';
 import type { View, ViewContext } from './types';
 import { kpis, legendItem, loadingBlock, notice, panel, section, segmented, select, toggle, warningText, type KpiSpec } from './ui';
 import { casesShortfalls } from '../lib/warnings';
 
 const L = {
-  townsFill: 'dm-towns-fill', townsLine: 'dm-towns-line', heat: 'dm-heat', pts: 'dm-pts', focus: 'dm-county-focus', ns1: 'dm-ns1',
+  townsFill: 'dm-towns-fill', townsLine: 'dm-towns-line', heat: 'dm-heat', pts: 'dm-pts', focus: 'dm-county-focus',
+  ns1: 'dm-ns1', ns1c: 'dm-ns1-c', mvFill: 'dm-mv-fill', mvLine: 'dm-mv-line', mvPts: 'dm-mv-pts', mvPtsNp: 'dm-mv-pts-np',
 };
-const S = { towns: 'dm-towns', cases: 'dm-cases', counties: 'dm-counties', ns1: 'dm-ns1' };
+const S = { towns: 'dm-towns', cases: 'dm-cases', counties: 'dm-counties', ns1: 'dm-ns1', mvPoly: 'dm-mv-poly', mvPts: 'dm-mv-pts' };
+const NS1_ICON = 'dm-ns1-icon';
+const NS1_BADGE = 'dm-ns1-c-';
 const WINDOW = 14;
 const SPEEDS = { '1': 320, '2': 160, '4': 70 } as const;
 type Speed = keyof typeof SPEEDS;
+type VectorMod = typeof import('./vectorData');
+const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
 class CasesOverlay implements Overlay {
   readonly projection = 'mercator' as const;
@@ -34,9 +41,12 @@ class CasesOverlay implements Overlay {
   townCounts = new Map<string, number>();
   breaks: number[] = [1];
   mode: MapMode = 'points';
+  colorMode: ColorMode = 'recency';
   county: string | null = null;
   ns1: NS1 | null = null;
   showNs1 = false;
+  vmod: VectorMod | null = null;
+  vector: { polys: GeoJSON.FeatureCollection; pts: GeoJSON.FeatureCollection } | null = null;
   private unbind: (() => void)[] = [];
   private ctx: OverlayCtx | null = null;
 
@@ -44,14 +54,17 @@ class CasesOverlay implements Overlay {
 
   install(ctx: OverlayCtx): void {
     this.ctx = ctx;
-    const { map, palette: p, beforeId } = ctx;
+    const { map, palette: p } = ctx;
     if (this.admin) {
       map.addSource(S.towns, { type: 'geojson', data: this.admin.townsFC });
       map.addSource(S.counties, { type: 'geojson', data: this.admin.countiesFC });
-      map.addLayer({ id: L.townsFill, type: 'fill', source: S.towns, paint: { 'fill-color': this.fillExpr(), 'fill-opacity': 0.82 } }, beforeId);
-      map.addLayer({ id: L.townsLine, type: 'line', source: S.towns, paint: { 'line-color': p.borderStrong, 'line-opacity': 0.5, 'line-width': ['interpolate', ['linear'], ['zoom'], 7, 0.3, 12, 1] } }, beforeId);
-      map.addLayer({ id: L.focus, type: 'line', source: S.counties, filter: ['==', ['get', 'code'], this.county ?? ''], paint: { 'line-color': p.accent, 'line-width': 2.2 } }, beforeId);
+      map.addLayer({ id: L.townsFill, type: 'fill', source: S.towns, paint: { 'fill-color': this.fillExpr(), 'fill-opacity': 0.78 } });
+      map.addLayer({ id: L.townsLine, type: 'line', source: S.towns, paint: { 'line-color': p.borderStrong, 'line-opacity': 0.5, 'line-width': ['interpolate', ['linear'], ['zoom'], 7, 0.3, 12, 1] } });
+      map.addLayer({ id: L.focus, type: 'line', source: S.counties, filter: ['==', ['get', 'code'], this.county ?? ''], paint: { 'line-color': p.accent, 'line-width': 2.2 } });
     }
+    map.addSource(S.mvPoly, { type: 'geojson', data: this.vector?.polys ?? EMPTY });
+    map.addSource(S.mvPts, { type: 'geojson', data: this.vector?.pts ?? EMPTY });
+    if (this.vmod) this.addVectorLayers();
     map.addSource(S.cases, { type: 'geojson', data: this.fc });
     map.addLayer({
       id: L.heat, type: 'heatmap', source: S.cases, maxzoom: 15,
@@ -62,44 +75,78 @@ class CasesOverlay implements Overlay {
         'heatmap-opacity': 0.85,
         'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(0,0,0,0)', 0.15, p.heat[1], 0.4, p.heat[2], 0.7, p.heat[3], 1, p.heat[4]],
       },
-    }, beforeId);
-    map.addLayer({
-      id: L.pts, type: 'circle', source: S.cases,
-      layout: { 'circle-sort-key': ['-', 0, ['get', 'n']] },
-      paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, ['+', 2.2, ['*', 1.5, ['sqrt', ['get', 'n']]]], 12, ['+', 5, ['*', 3.2, ['sqrt', ['get', 'n']]]]],
-        'circle-color': ['case', ['>=', ['get', 'l'], ['get', 'i']], p.local, p.imported],
-        'circle-opacity': 0.82,
-        'circle-stroke-color': p.halo,
-        'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 6, 0.6, 12, 1.4],
-        'circle-stroke-opacity': 0.9,
-      },
-    }, beforeId);
-    map.addSource(S.ns1, { type: 'geojson', data: this.ns1FC() });
-    map.addLayer({
-      id: L.ns1, type: 'circle', source: S.ns1,
-      paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 3, 13, 7],
-        'circle-color': p.halo, 'circle-stroke-color': p.accent,
-        'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 13, 3],
-      },
-    }, beforeId);
+    });
+    map.addLayer({ id: L.pts, type: 'circle', source: S.cases, layout: { 'circle-sort-key': caseSortKey(this.colorMode) }, paint: casePaint(p, this.colorMode) });
+    // NS1 clinics: canvas-drawn icons (no sprite/glyph dependency), clustered at low zoom.
+    addNs1Icon(map, NS1_ICON, p.ns1);
+    map.addSource(S.ns1, { type: 'geojson', data: this.ns1FC(), cluster: true, clusterRadius: 42, clusterMaxZoom: 12 });
+    map.addLayer({ id: L.ns1c, type: 'symbol', source: S.ns1, filter: ['has', 'point_count'],
+      layout: { 'icon-image': ['concat', NS1_BADGE, ['get', 'point_count_abbreviated']], 'icon-allow-overlap': true, 'icon-ignore-placement': true } }, L.pts);
+    map.addLayer({ id: L.ns1, type: 'symbol', source: S.ns1, filter: ['!', ['has', 'point_count']],
+      layout: { 'icon-image': NS1_ICON, 'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.85, 14, 1.15], 'icon-allow-overlap': true, 'icon-ignore-placement': true } }, L.pts);
+    // (NS1 sits under the case markers: cases are the primary data)
     this.applyMode();
     this.applyTownState();
     if (!this.unbind.length) {
-      this.unbind.push(
-        this.host.interactive(L.pts, (e, hv) => this.onPick(e, hv, L.pts)),
-        this.host.interactive(L.townsFill, (e, hv) => this.onPick(e, hv, L.townsFill)),
-        this.host.interactive(L.ns1, (e, hv) => this.onPick(e, hv, L.ns1)),
-      );
+      const missing = (e: { id: string }) => {
+        if (e.id.startsWith(NS1_BADGE) && this.ctx) addCountBadge(this.ctx.map, e.id, e.id.slice(NS1_BADGE.length), this.ctx.palette.ns1);
+      };
+      map.on('styleimagemissing', missing);
+      this.unbind.push(() => map.off('styleimagemissing', missing));
+      for (const id of [L.pts, L.townsFill, L.ns1, L.ns1c, L.mvFill, L.mvPtsNp]) this.unbind.push(this.host.interactive(id, (e, hv) => this.onPick(e, hv, id)));
     }
   }
 
   uninstall(map: MLMap): void {
     for (const u of this.unbind) u();
     this.unbind = [];
-    removeAll(map, [L.ns1, L.pts, L.heat, L.focus, L.townsLine, L.townsFill], [S.ns1, S.cases, S.counties, S.towns]);
+    removeAll(map, [L.ns1, L.ns1c, L.pts, L.heat, L.mvPtsNp, L.mvLine, L.mvFill, L.focus, L.townsLine, L.townsFill], [S.ns1, S.cases, S.mvPts, S.mvPoly, S.counties, S.towns]);
     this.ctx = null;
+  }
+
+  private addVectorLayers(): void {
+    const m = this.map;
+    if (!m || !this.vmod || m.getLayer(L.mvFill)) return;
+    const before = m.getLayer(L.heat) ? L.heat : undefined;
+    // Village polygons at every zoom + small squares for villages without a polygon, so the overlay
+    // never looks like the (circular) case markers. Inserted under the case layers.
+    const p = this.ctx!.palette;
+    const color: ExpressionSpecification = ['match', ['get', 'r'], 3, p.risk[3], 2, p.risk[2], 1, p.risk[1], p.risk[0]];
+    addRiskSquares(m, 'dm-risk-sq-', p.risk, p.halo);
+    m.addLayer({ id: L.mvFill, type: 'fill', source: S.mvPoly, layout: { 'fill-sort-key': ['get', 'r'] }, paint: { 'fill-color': color, 'fill-opacity': 0.42 } }, before);
+    m.addLayer({ id: L.mvLine, type: 'line', source: S.mvPoly, minzoom: 10, paint: { 'line-color': color, 'line-width': 1, 'line-opacity': 0.8 } }, before);
+    m.addLayer({ id: L.mvPtsNp, type: 'symbol', source: S.mvPts, filter: ['==', ['get', 'np'], 1],
+      layout: { 'icon-image': ['concat', 'dm-risk-sq-', ['to-string', ['get', 'r']]], 'icon-allow-overlap': true, 'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.75, 13, 1.2] } }, before);
+  }
+
+  setVector(mod: VectorMod | null, fc: { polys: GeoJSON.FeatureCollection; pts: GeoJSON.FeatureCollection } | null): void {
+    if (mod) this.vmod = mod;
+    this.vector = fc;
+    const m = this.map;
+    if (!m) return;
+    this.addVectorLayers();
+    (m.getSource(S.mvPoly) as GeoJSONSource | undefined)?.setData(fc?.polys ?? EMPTY);
+    (m.getSource(S.mvPts) as GeoJSONSource | undefined)?.setData(fc?.pts ?? EMPTY);
+  }
+
+  setColorMode(mode: ColorMode): void {
+    this.colorMode = mode;
+    const m = this.map;
+    if (!m?.getLayer(L.pts) || !this.ctx) return;
+    for (const [k, v] of Object.entries(casePaint(this.ctx.palette, mode))) m.setPaintProperty(L.pts, k as 'circle-color', v as never);
+    m.setLayoutProperty(L.pts, 'circle-sort-key', caseSortKey(mode));
+  }
+
+  /** Zoom into an NS1 cluster. */
+  async expandCluster(id: number, center: [number, number]): Promise<void> {
+    const src = this.map?.getSource(S.ns1) as GeoJSONSource | undefined;
+    if (!src) return;
+    try {
+      const z = await src.getClusterExpansionZoom(id);
+      this.host.jump(center, Math.min(z + 0.2, 15));
+    } catch {
+      /* cluster vanished */
+    }
   }
 
   private fillExpr(): ExpressionSpecification {
@@ -156,6 +203,7 @@ class CasesOverlay implements Overlay {
     vis(L.townsFill, this.mode === 'towns');
     vis(L.townsLine, this.mode === 'towns');
     vis(L.ns1, this.showNs1);
+    vis(L.ns1c, this.showNs1);
   }
 
   setCounty(code: string | null): void {
@@ -208,15 +256,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     const pr = f.properties as Record<string, unknown>;
     let content: HTMLElement;
     if (layer === L.pts) {
-      const l = Number(pr.l) || 0, i = Number(pr.i) || 0;
-      content = h('div', { class: 'pop' },
-        h('p', { class: 'pop-title' }, townLabel(data?.pts[Number(f.id)]?.[2] ?? null)),
-        h('p', { class: 'pop-sub' }, t('map.popupPoint')),
-        h('dl', { class: 'pop-dl' },
-          h('dt', null, t('map.popupCases')),
-          h('dd', null, st.type !== 'imported' ? h('span', { class: 'pill local' }, `${t('common.local')} ${fmtNum(l)}`) : null,
-            st.type !== 'local' ? h('span', { class: 'pill imported' }, `${t('common.importedShort')} ${fmtNum(i)}`) : null),
-          h('dt', null, t('map.range')), h('dd', null, fmtRange())));
+      content = casePopup({ title: townLabel(data?.pts[Number(f.id)]?.[2] ?? null), showLocal: st.type !== 'imported', showImported: st.type !== 'local', rangeText: fmtRange(), props: pr });
       const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
       host.showPopup(coords, content, hover);
     } else if (layer === L.townsFill) {
@@ -226,6 +266,17 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
         h('dl', { class: 'pop-dl' }, h('dt', null, t('map.popupCases')), h('dd', null, t('common.cases', { n: fmtNum(n ? n[0] + n[1] : 0) })),
           h('dt', null, t('map.range')), h('dd', null, fmtRange())));
       host.showPopup(e.lngLat, content, hover);
+    } else if (layer === L.ns1c) {
+      const n = Number(pr.point_count) || 0;
+      const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
+      if (hover) host.showPopup(coords, h('div', { class: 'pop' }, h('p', { class: 'pop-kicker' }, icon('hospital'), t('map.ns1Cluster', { n: fmtNum(n) }))), true);
+      else {
+        host.hidePopup();
+        void overlay?.expandCluster(Number(pr.cluster_id), coords);
+      }
+    } else if ((layer === L.mvFill || layer === L.mvPtsNp) && vecBundle && vmod) {
+      const v = vecBundle.data.villages[Number(pr.k)];
+      if (v) host.showPopup(e.lngLat, vmod.villagePopup(vecBundle, admin, v, 0, !!(v[5] && vecBundle.polyByCode.has(v[5]))), hover);
     } else if (layer === L.ns1 && ns1Data) {
       const r = ns1Data.h[Number(pr.i)];
       if (!r) return;
@@ -238,6 +289,18 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
 
   const overlay = host ? new CasesOverlay(host, admin, onPick) : null;
   let ns1Data: NS1 | null = null;
+  let vmod: VectorMod | null = null;
+  let vecBundle: import('./vectorData').VectorBundle | null = null;
+  // Reference-date badge (old CDC map style): colours are "days from onset to this date".
+  const badgeDate = h('span', { class: 'date-badge-date' });
+  const badge = h('div', { class: 'date-badge', title: t('rec.refNote') }, h('span', { class: 'date-badge-label' }, t('rec.ref')), badgeDate);
+  root.append(badge);
+  const refISO = () => dateFromDoy(st.year, st.to);
+  function renderBadge(): void {
+    const d = refISO();
+    badgeDate.textContent = `${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)}`;
+    badge.hidden = st.mode !== 'points' || st.color !== 'recency';
+  }
 
   // ------------------------------------------------------------- panel UI
   const kpiBox = h('div', { class: 'kpi-slot' }, h('div', { class: 'kpis kpis-skeleton', 'aria-hidden': 'true' }, h('div', { class: 'kpi' }), h('div', { class: 'kpi' }), h('div', { class: 'kpi' }), h('div', { class: 'kpi' })));
@@ -286,8 +349,25 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     st = { ...st, mode: v };
     overlay?.setMode(v);
     renderLegend();
+    renderBadge();
     commit();
   });
+  const colorSeg = segmented<ColorMode>(t('map.colorMode'), [
+    { value: 'recency', label: t('map.color.recency') },
+    { value: 'type', label: t('map.color.type') },
+  ], st.color, (v) => {
+    st = { ...st, color: v };
+    overlay?.setColorMode(v);
+    renderLegend();
+    renderBadge();
+    commit();
+  });
+  const mvNote = h('div', { class: 'hint' });
+  const mvToggle = toggle(t('map.vector'), st.mv, (on) => {
+    st = { ...st, mv: on };
+    void applyVector();
+    commit();
+  }, 'vector');
   const ns1Note = h('p', { class: 'hint' });
   const ns1Toggle = toggle(t('map.ns1'), st.ns1, (on) => {
     st = { ...st, ns1: on };
@@ -380,7 +460,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     kpiBox,
     section(null, h('div', { class: 'field-row' }, yearSel, countySel), typeSeg),
     section(t('map.range'), range.el, h('div', { class: 'play-row' }, playBtn, stopBtn, speedSel), statusLine, warnBox),
-    section(null, modeSeg, ns1Toggle, ns1Note),
+    section(null, modeSeg, colorSeg, mvToggle, mvNote, ns1Toggle, ns1Note),
     section(t('common.legend'), legend, resultLine),
     section(t('map.topTowns'), topList),
     h('p', { class: 'privacy-note' }, icon('pin'), t('map.privacy')),
@@ -412,7 +492,10 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   function renderLegend(): void {
     clear(legend);
     const p = readPalette();
-    if (st.mode === 'points') {
+    if (st.mode === 'points' && st.color === 'recency') {
+      legend.append(...recencyLegend(st.type !== 'local'));
+      legend.append(h('li', { class: 'legend-item legend-note' }, t('rec.refNote')));
+    } else if (st.mode === 'points') {
       if (st.type !== 'imported') legend.append(legendItem(p.local, t('map.legendLocal')));
       if (st.type !== 'local') legend.append(legendItem(p.imported, t('map.legendImported')));
       legend.append(h('li', { class: 'legend-item legend-note' }, h('span', { class: 'lg-sizes', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), t('map.legendSize')));
@@ -427,7 +510,8 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
         legend.append(legendItem(p.choropleth[Math.min(5, i + 1)], label, 'square'));
       });
     }
-    if (st.ns1) legend.append(h('li', { class: 'legend-item' }, h('span', { class: 'lg-ring', 'aria-hidden': 'true' }), t('map.hospital')));
+    if (st.mv) for (const r of [3, 2, 1]) legend.append(legendItem(`var(--risk-${r})`, t(`vector.risk${r}` as 'vector.risk1'), 'square'));
+    if (st.ns1) legend.append(h('li', { class: 'legend-item' }, h('span', { class: 'lg-ns1', 'aria-hidden': 'true' }), t('map.hospital')));
   }
 
   function summaryText(): string {
@@ -442,12 +526,8 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   function render(): void {
     if (!data || destroyed) return;
     agg = aggregateCases(data, { from: st.from, to: st.to, type: st.type, county: st.county });
-    const pts = data.pts;
-    const features: GeoJSON.Feature<GeoJSON.Point>[] = [];
-    for (const [idx, [l, i]] of agg.byPt) {
-      const p = pts[idx]!;
-      features.push({ type: 'Feature', id: idx, properties: { l, i, n: l + i }, geometry: { type: 'Point', coordinates: [p[0], p[1]] } });
-    }
+    const features = caseFeatures(data, agg, refISO());
+    renderBadge();
     const towns = new Map<string, number>();
     let max = 0;
     for (const [code, [l, i]] of agg.byTown) {
@@ -516,6 +596,29 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     }
   }
 
+  async function applyVector(): Promise<void> {
+    clear(mvNote);
+    if (!st.mv) {
+      overlay?.setVector(null, null);
+      renderLegend();
+      return;
+    }
+    try {
+      vmod ??= await import('./vectorData');
+      vecBundle = await vmod.loadVectorBundle();
+    } catch (e) {
+      if (destroyed) return;
+      mvNote.append(errorCard('', () => void applyVector(), e instanceof DataError ? e.file : 'vector.json'));
+      return;
+    }
+    if (destroyed || !st.mv) return;
+    const fc = vmod.vectorFC(vecBundle, 0);
+    overlay?.setVector(vmod, fc);
+    const w = vecBundle.data.weeks[0];
+    if (w) mvNote.textContent = t('map.vectorNote', { week: `${fmtDate(w[0], 'short')}–${fmtDate(w[1], 'short')}` });
+    renderLegend();
+  }
+
   async function applyNs1(): Promise<void> {
     ns1Note.textContent = '';
     if (st.ns1 && !ns1Data) {
@@ -543,11 +646,13 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   renderLegend();
   if (overlay && host) {
     overlay.mode = st.mode;
+    overlay.colorMode = st.color;
     overlay.county = st.county;
     host.setOverlay(overlay);
     zoomToCounty();
   }
   if (st.ns1) void applyNs1();
+  if (st.mv) void applyVector();
   await loadYear();
 
   return {

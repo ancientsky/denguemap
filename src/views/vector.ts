@@ -1,69 +1,54 @@
 // #/vector — 蚊媒地圖: village mosquito-risk polygons (point fallback), week + county filters,
-// danger-village table, client-side CSV, exact risk definitions and survey coverage.
+// 5-week popup, danger-village table with triggering indicators, client-side CSV, risk definitions,
+// survey coverage, and an optional "recent cases" overlay (last 30 days, recency colours).
 import type { Map as MLMap, GeoJSONSource, MapLayerMouseEvent } from 'maplibre-gl';
-import type { ExpressionSpecification } from '@maplibre/maplibre-gl-style-spec';
-import { feature } from 'topojson-client';
-import type { GeometryCollection } from 'topojson-specification';
 import { errorCard } from '../app';
 import { fmtDate, fmtNum, fmtPct, getLang, placeName, t, type MessageKey } from '../i18n';
-import { loadAdmin, type Admin, type Place } from '../lib/admin';
+import { loadAdmin, type Admin } from '../lib/admin';
+import { aggregateCases } from '../lib/aggregate';
 import { csvBlob, downloadBlob } from '../lib/csv';
 import { DataError, loadData } from '../lib/data';
+import { addDays, dayOfYear } from '../lib/dates';
 import { clear, h } from '../lib/dom';
 import { TAIWAN_BOUNDS, type BBox } from '../lib/geo';
 import { icon } from '../lib/icons';
 import { normalizeVectorParams, serializeVectorParams, type VectorParams } from '../lib/params';
-import type { Vector, VectorVillage, VectorWeek } from '../lib/types';
-import { validateTopology, validateVector } from '../lib/validate';
-import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
-import type { View, ViewContext } from './types';
-import { loadingBlock, panel, section, select, unavailableState } from './ui';
+import type { VectorVillage } from '../lib/types';
+import { validateCases } from '../lib/validate';
 import { isUnavailable } from '../lib/warnings';
+import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
+import { caseFeatures, casePaint, casePopup, caseSortKey, recencyLegend } from './caseLayer';
+import type { View, ViewContext } from './types';
+import { loadingBlock, panel, section, select, toggle, unavailableState } from './ui';
+import { addVectorLayers, countyOf, loadVectorBundle, RISK_KEYS, triggerText, vectorFC, villageLabel, villagePopup, weekOf, type VectorBundle } from './vectorData';
 
-const L = { fill: 'dm-v-fill', line: 'dm-v-line', ptsAll: 'dm-v-pts', ptsNp: 'dm-v-pts-np' };
-const S = { poly: 'dm-v-poly', pts: 'dm-v-pts' };
-const RISK_KEYS: MessageKey[] = ['vector.risk0', 'vector.risk1', 'vector.risk2', 'vector.risk3'];
+const L = { fill: 'dm-v-fill', line: 'dm-v-line', ptsAll: 'dm-v-pts', ptsNp: 'dm-v-pts-np', cases: 'dm-v-cases' };
+const S = { poly: 'dm-v-poly', pts: 'dm-v-pts', cases: 'dm-v-cases' };
 const DEF_KEYS: MessageKey[] = ['vector.def0', 'vector.def1', 'vector.def2', 'vector.def3'];
-
-type PolyFC = GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon, { code: string }>;
+const RECENT_DAYS = 30;
 
 class VectorOverlay implements Overlay {
   polys: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
   pts: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+  cases: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
   private unbind: (() => void)[] = [];
   private map: MLMap | null = null;
-  constructor(private host: MapHost, private onPick: (e: MapLayerMouseEvent, hover: boolean) => void) {}
-  install({ map, palette: p, beforeId }: OverlayCtx): void {
+  constructor(private host: MapHost, private onPick: (e: MapLayerMouseEvent, hover: boolean, layer: string) => void) {}
+  install({ map, palette: p }: OverlayCtx): void {
     this.map = map;
-    const color: ExpressionSpecification = ['match', ['get', 'r'], 3, p.risk[3], 2, p.risk[2], 1, p.risk[1], p.risk[0]];
     map.addSource(S.poly, { type: 'geojson', data: this.polys });
     map.addSource(S.pts, { type: 'geojson', data: this.pts });
-    map.addLayer({ id: L.fill, type: 'fill', source: S.poly, minzoom: 9, layout: { 'fill-sort-key': ['get', 'r'] }, paint: { 'fill-color': color, 'fill-opacity': 0.72 } }, beforeId);
-    map.addLayer({ id: L.line, type: 'line', source: S.poly, minzoom: 9, paint: { 'line-color': p.halo, 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.4, 14, 1.4], 'line-opacity': 0.8 } }, beforeId);
-    const circle = (id: string, filter: boolean, minzoom: number, maxzoom: number) =>
-      map.addLayer({
-        id, type: 'circle', source: S.pts, minzoom, maxzoom,
-        ...(filter ? { filter: ['==', ['get', 'np'], 1] as ExpressionSpecification } : {}),
-        layout: { 'circle-sort-key': ['get', 'r'] },
-        paint: {
-          'circle-color': color, 'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, ['+', 2.2, ['*', 0.7, ['get', 'r']]], 12, ['+', 5, ['get', 'r']]],
-          'circle-stroke-color': p.halo, 'circle-stroke-width': 1, 'circle-opacity': 0.95,
-        },
-      }, beforeId);
-    circle(L.ptsAll, false, 0, 9.5);
-    circle(L.ptsNp, true, 9.5, 24);
+    map.addSource(S.cases, { type: 'geojson', data: this.cases });
+    addVectorLayers(map, p, { ...L, poly: S.poly, pts: S.pts }, { fillOpacity: 0.6, minzoom: 9 });
+    map.addLayer({ id: L.cases, type: 'circle', source: S.cases, layout: { 'circle-sort-key': caseSortKey('recency') }, paint: casePaint(p, 'recency') });
     if (!this.unbind.length) {
-      this.unbind.push(
-        this.host.interactive(L.fill, (e, hv) => this.onPick(e, hv)),
-        this.host.interactive(L.ptsAll, (e, hv) => this.onPick(e, hv)),
-        this.host.interactive(L.ptsNp, (e, hv) => this.onPick(e, hv)),
-      );
+      for (const id of [L.fill, L.ptsAll, L.ptsNp, L.cases]) this.unbind.push(this.host.interactive(id, (e, hv) => this.onPick(e, hv, id)));
     }
   }
   uninstall(map: MLMap): void {
     for (const u of this.unbind) u();
     this.unbind = [];
-    removeAll(map, [L.ptsNp, L.ptsAll, L.line, L.fill], [S.pts, S.poly]);
+    removeAll(map, [L.cases, L.ptsNp, L.ptsAll, L.line, L.fill], [S.cases, S.pts, S.poly]);
     this.map = null;
   }
   setData(polys: GeoJSON.FeatureCollection, pts: GeoJSON.FeatureCollection): void {
@@ -72,10 +57,11 @@ class VectorOverlay implements Overlay {
     (this.map?.getSource(S.poly) as GeoJSONSource | undefined)?.setData(polys);
     (this.map?.getSource(S.pts) as GeoJSONSource | undefined)?.setData(pts);
   }
+  setCases(fc: GeoJSON.FeatureCollection): void {
+    this.cases = fc;
+    (this.map?.getSource(S.cases) as GeoJSONSource | undefined)?.setData(fc);
+  }
 }
-
-const pct = (v: number | null) => (v == null ? '—' : fmtPct(v / 100));
-const lvl = (v: number | null) => (v == null ? '—' : t('vector.levelN', { n: v }));
 
 export default async function vectorView(ctx: ViewContext): Promise<View> {
   const { app, root } = ctx;
@@ -84,11 +70,10 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
   pnl.body.append(loadingBlock());
   let destroyed = false;
 
-  const [host, admin, vRes, pRes] = await Promise.all([
+  const [host, admin, bRes] = await Promise.all([
     app.getMapHost(),
     loadAdmin().catch(() => null as Admin | null),
-    loadData('vector.json', validateVector).then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, e })),
-    loadData('geo/vector-villages.topo.json', (v) => validateTopology(v, 'geo/vector-villages.topo.json', ['villages'])).catch(() => null),
+    loadVectorBundle().then((b) => ({ ok: true as const, b }), (e: unknown) => ({ ok: false as const, e })),
   ]);
   if (destroyed) return { destroy() {} };
   clear(pnl.body);
@@ -97,57 +82,45 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
     pnl.body.append(unavailableState());
     return { destroy() {} };
   }
-  if (!vRes.ok) {
-    pnl.body.append(errorCard('', () => location.reload(), vRes.e instanceof DataError ? vRes.e.file : 'vector.json'));
+  if (!bRes.ok) {
+    pnl.body.append(errorCard('', () => location.reload(), bRes.e instanceof DataError ? bRes.e.file : 'vector.json'));
     return { destroy() {} };
   }
-  const data: Vector = vRes.v;
-
-  // village code → polygon
-  const polyByCode = new Map<string, PolyFC['features'][number]>();
-  if (pRes) {
-    const fc = feature(pRes, pRes.objects.villages as GeometryCollection<{ code: string }>) as unknown as PolyFC;
-    for (const f of fc.features) if (f.geometry && typeof f.properties?.code === 'string') polyByCode.set(f.properties.code, f);
-  }
-  // county code for each village (villCode prefix, else via county name)
-  const countyOf = (v: VectorVillage): Place | undefined =>
-    (v[5] ? admin?.countyByCode.get(v[5].slice(0, 5)) : undefined) ?? admin?.countyByZh.get(v[0]);
+  const bundle: VectorBundle = bRes.b;
+  const data = bundle.data;
   const countyCodes = new Set<string>();
   for (const v of data.villages) {
-    const c = countyOf(v);
+    const c = countyOf(admin, v);
     if (c) countyCodes.add(c.code);
   }
   let st: VectorParams = normalizeVectorParams(ctx.params, data.weeks.length, countyCodes);
+  let showCases = ctx.params.cases === '1';
   const counties = (admin?.counties ?? []).filter((c) => countyCodes.has(c.code));
-
-  const villageLabel = (v: VectorVillage): string => {
-    if (getLang() !== 'en' || !admin) return `${v[0]}${v[1]}${v[2]}`;
-    const c = countyOf(v);
-    const town = c ? [...admin.towns.values()].find((x) => x.county === c.code && x.zh === v[1]) : undefined;
-    return `${v[2]}, ${town?.en ?? v[1]}, ${c?.en ?? v[0]}`;
-  };
   const weekLabel = (i: number) => {
     const w = data.weeks[i]!;
     return t('vector.weekOption', { from: fmtDate(w[0], 'short'), to: fmtDate(w[1], 'short') }) + (i === 0 ? t('vector.weekLatest') : '');
   };
-  const filtered = () => data.villages.map((v, k) => [v, k] as const).filter(([v]) => !st.county || countyOf(v)?.code === st.county);
-  const wk = (v: VectorVillage): VectorWeek => v[7][st.week] ?? [0, null, null, null];
+  const keep = (v: VectorVillage) => !st.county || countyOf(admin, v)?.code === st.county;
+  const townLabel = (code: string | null | undefined): string => {
+    const town = code ? admin?.towns.get(code) : undefined;
+    if (!town) return t('common.unknownTown');
+    const county = admin?.countyByCode.get(town.county);
+    return getLang() === 'en' ? `${placeName(town)}, ${placeName(county)}` : `${placeName(county)}${placeName(town)}`;
+  };
 
   // ---------------- popups
-  const onPick = (e: MapLayerMouseEvent, hover: boolean) => {
+  let caseTowns = new Map<number, string | null>();
+  const onPick = (e: MapLayerMouseEvent, hover: boolean, layer: string) => {
     const f = e.features?.[0];
-    const v = f ? data.villages[Number(f.properties?.k)] : undefined;
-    if (!v || !host) return;
-    const [r, bi, ovi, gra] = wk(v);
-    host.showPopup(e.lngLat, h('div', { class: 'pop' },
-      h('p', { class: 'pop-title' }, villageLabel(v)),
-      h('p', null, h('span', { class: 'pill risk', style: { '--sw': `var(--risk-${r})` } }, t(RISK_KEYS[r]!))),
-      h('dl', { class: 'pop-dl' },
-        h('dt', null, t('vector.week')), h('dd', null, weekLabel(st.week)),
-        h('dt', null, t('vector.breteau')), h('dd', null, lvl(bi)),
-        h('dt', null, t('vector.ovitrap')), h('dd', null, pct(ovi)),
-        h('dt', null, t('vector.gravitrap')), h('dd', null, pct(gra))),
-      v[5] && polyByCode.has(v[5]) ? null : h('p', { class: 'pop-sub' }, t('vector.noPolygon').trim())), hover);
+    if (!f || !host) return;
+    if (layer === L.cases) {
+      const pr = f.properties as Record<string, unknown>;
+      host.showPopup(e.lngLat, casePopup({ title: townLabel(caseTowns.get(Number(f.id))), showLocal: true, showImported: true, rangeText: null, props: pr }), hover);
+      return;
+    }
+    const v = data.villages[Number(f.properties?.k)];
+    if (!v) return;
+    host.showPopup(e.lngLat, villagePopup(bundle, admin, v, st.week, !!(v[5] && bundle.polyByCode.has(v[5]))), hover);
   };
   const overlay = host ? new VectorOverlay(host, onPick) : null;
 
@@ -160,6 +133,12 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
     st = { ...st, county: v || null };
     update();
     zoom();
+  });
+  const caseNote = h('div', { class: 'case-note' });
+  const caseToggle = toggle(t('vector.showCases'), showCases, (on) => {
+    showCases = on;
+    void applyCases();
+    persist();
   });
   const defs = h('ul', { class: 'def-list' });
   const dangerBox = h('div');
@@ -174,59 +153,87 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
   }
   pnl.body.append(
     h('p', { class: 'hint' }, t('vector.updated', { date: fmtDate(data.updated) })),
-    section(null, h('div', { class: 'field-row field-row-even' }, weekSel, countySel)),
+    section(null, h('div', { class: 'field-row field-row-even' }, weekSel, countySel), caseToggle, caseNote),
     section(t('common.legend'), defs),
     section(null, dangerBox, h('div', null, csvBtn)),
     section(t('vector.coverage'), coverage),
   );
 
-  function update(): void {
-    const rows = filtered();
-    const counts = [0, 0, 0, 0];
-    const polys: GeoJSON.Feature[] = [];
-    const pts: GeoJSON.Feature[] = [];
-    for (const [v, k] of rows) {
-      const r = wk(v)[0];
-      counts[r]!++;
-      const poly = v[5] ? polyByCode.get(v[5]) : undefined;
-      if (poly) polys.push({ type: 'Feature', id: k, properties: { k, r }, geometry: poly.geometry });
-      pts.push({ type: 'Feature', id: k, properties: { k, r, np: poly ? 0 : 1 }, geometry: { type: 'Point', coordinates: [v[3], v[4]] } });
-    }
-    overlay?.setData({ type: 'FeatureCollection', features: polys }, { type: 'FeatureCollection', features: pts });
+  function persist(): void {
+    app.setParams({ ...serializeVectorParams(st), ...(showCases ? { cases: '1' } : {}) });
+  }
 
+  function update(): void {
+    const { polys, pts, counts } = vectorFC(bundle, st.week, keep);
+    overlay?.setData(polys, pts);
     clear(defs);
     for (const r of [3, 2, 1, 0]) {
       defs.append(h('li', { class: 'def-item' }, h('span', { class: 'lg-square', style: { '--sw': `var(--risk-${r})` }, 'aria-hidden': 'true' }),
         h('span', null, h('span', { class: 'def-name' }, t(RISK_KEYS[r]!)), h('span', { class: 'def-count' }, fmtNum(counts[r]!))),
         h('span', { class: 'def-text' }, t(DEF_KEYS[r]!))));
     }
-
-    const danger = rows.filter(([v]) => wk(v)[0] === 3).map(([v]) => v);
+    const danger = data.villages.filter((v) => keep(v) && weekOf(v, st.week)[0] === 3);
     clear(dangerBox);
     dangerBox.append(h('h2', { class: 'psec-title' }, t('vector.dangerList', { n: fmtNum(danger.length) })));
     if (!danger.length) dangerBox.append(h('p', { class: 'hint' }, t('vector.dangerEmpty')));
     else {
       dangerBox.append(h('div', { class: 'table-scroll table-box', tabindex: '0', role: 'region', 'aria-label': t('vector.dangerList', { n: danger.length }) },
         h('table', { class: 'data-table' },
-          h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('vector.village')), h('th', { scope: 'col' }, t('vector.indicators')))),
-          h('tbody', null, ...danger.map((v) => {
-            const [, bi, ovi, gra] = wk(v);
-            const parts = [bi != null ? `${t('vector.biShort')} ${bi}` : '', ovi != null ? `${t('vector.oviShort')} ${pct(ovi)}` : '', gra != null ? `${t('vector.graShort')} ${pct(gra)}` : ''].filter(Boolean);
-            return h('tr', null, h('th', { scope: 'row', class: 'wrap' }, villageLabel(v)), h('td', { class: 'wrap' }, parts.join(' · ') || '—'));
-          })))));
+          h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('vector.village')), h('th', { scope: 'col' }, t('vector.triggered')))),
+          h('tbody', null, ...danger.map((v) => h('tr', null, h('th', { scope: 'row', class: 'wrap' }, villageLabel(admin, v)), h('td', { class: 'wrap' }, triggerText(weekOf(v, st.week)))))))));
     }
     const countyName = st.county ? placeName(admin?.countyByCode.get(st.county)) : t('common.allCounties');
     const msg = `${countyName} ${weekLabel(st.week)}: ${t('vector.counts', { r3: counts[3]!, r2: counts[2]!, r1: counts[1]! })}`;
     app.mapSummary(msg);
     app.announce(msg);
-    app.setParams(serializeVectorParams(st));
+    persist();
+  }
+
+  async function applyCases(): Promise<void> {
+    clear(caseNote);
+    if (!showCases) {
+      overlay?.setCases({ type: 'FeatureCollection', features: [] });
+      return;
+    }
+    const m = app.getManifestNow();
+    if (!m) return;
+    const ref = m.latestOnset;
+    const start = addDays(ref, -RECENT_DAYS);
+    const years = [...new Set([+start.slice(0, 4), +ref.slice(0, 4)])].filter((y) => m.years.includes(y));
+    caseNote.append(h('p', { class: 'inline-status busy', role: 'status' }, t('app.loading')));
+    try {
+      const files = await Promise.all(years.map((y) => loadData(`cases/${y}.json`, (v) => validateCases(v, y))));
+      if (destroyed || !showCases) return;
+      const feats: GeoJSON.Feature[] = [];
+      caseTowns = new Map();
+      let total = 0;
+      for (const f of files) {
+        const from = f.year === +start.slice(0, 4) ? dayOfYear(start) : 1;
+        const to = f.year === +ref.slice(0, 4) ? dayOfYear(ref) : 366;
+        const agg = aggregateCases(f, { from, to, type: 'all', county: null });
+        const base = f.year * 100_000;
+        for (const ft of caseFeatures(f, agg, ref, base)) {
+          feats.push(ft);
+          caseTowns.set(Number(ft.id), f.pts[Number(ft.id) - base]?.[2] ?? null);
+        }
+        total += agg.total.local + agg.total.imported;
+      }
+      overlay?.setCases({ type: 'FeatureCollection', features: feats });
+      clear(caseNote);
+      caseNote.append(
+        h('p', { class: 'hint' }, t('vector.casesNote', { n: fmtNum(total), from: fmtDate(start, 'short'), to: fmtDate(ref, 'short') })),
+        h('ul', { class: 'legend' }, ...recencyLegend(true).slice(0, 3), ...recencyLegend(true).slice(4)));
+    } catch (e) {
+      if (destroyed) return;
+      clear(caseNote);
+      caseNote.append(errorCard('', () => void applyCases(), e instanceof DataError ? e.file : 'cases'));
+    }
   }
 
   function zoom(): void {
     if (!host) return;
     const b = st.county ? admin?.countyByCode.get(st.county)?.bbox : null;
     if (b) return host.fit(b, 11);
-    // all surveyed villages
     let bb: BBox | null = null;
     for (const v of data.villages) bb = bb ? [Math.min(bb[0], v[3]), Math.min(bb[1], v[4]), Math.max(bb[2], v[3]), Math.max(bb[3], v[4])] : [v[3], v[4], v[3], v[4]];
     host.fit(bb ?? TAIWAN_BOUNDS, 10);
@@ -237,8 +244,8 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
     const head = getLang() === 'en'
       ? ['County', 'Township', 'Village', 'Village code', 'Risk', 'Breteau level', 'Ovitrap positivity (%)', 'Gravitrap positivity (%)', 'Week start', 'Week end']
       : ['縣市', '鄉鎮市區', '村里', '村里代碼', '風險等級', '布氏級數', '誘卵桶陽性率(%)', '誘殺桶陽性率(%)', '週起日', '週迄日'];
-    const rows = filtered()
-      .map(([v]) => [v, wk(v)] as const)
+    const rows = data.villages.filter(keep)
+      .map((v) => [v, weekOf(v, st.week)] as const)
       .sort((a, b) => b[1][0] - a[1][0])
       .map(([v, [r, bi, ovi, gra]]) => [v[0], v[1], v[2], v[5] ?? '', t(RISK_KEYS[r]!), bi ?? '', ovi ?? '', gra ?? '', w[0], w[1]]);
     const county = st.county ? `-${admin?.countyByCode.get(st.county)?.[getLang() === 'en' ? 'en' : 'zh'] ?? st.county}` : '';
@@ -250,6 +257,7 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
     zoom();
   }
   update();
+  if (showCases) void applyCases();
 
   return {
     destroy() {

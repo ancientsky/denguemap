@@ -26,6 +26,22 @@ const DEVICES = {
 };
 const DEVICE_NAMES = list('SMOKE_DEVICES', Object.keys(DEVICES));
 const ALLOWED = /tiles\.openfreemap\.org/;
+// SMOKE_DATA=<dir>: serve /denguemap/data/* from another directory (e.g. .fixtures/data) without touching public/data.
+const DATA_DIR = process.env.SMOKE_DATA ? join(process.cwd(), process.env.SMOKE_DATA) : null;
+async function prepare(ctx) {
+  if (!process.env.SMOKE_REAL_TILES) await ctx.route(/tiles\.openfreemap\.org/, (r) => r.abort('internetdisconnected'));
+  if (DATA_DIR) {
+    const { readFile } = await import('node:fs/promises');
+    await ctx.route(/\/denguemap\/data\//, async (r) => {
+      const rel = new URL(r.request().url()).pathname.replace(/^.*\/denguemap\/data\//, '');
+      try {
+        await r.fulfill({ status: 200, contentType: 'application/json', body: await readFile(join(DATA_DIR, rel)) });
+      } catch {
+        await r.fulfill({ status: 404, body: 'not found' });
+      }
+    });
+  }
+}
 
 mkdirSync(OUT, { recursive: true });
 
@@ -71,7 +87,7 @@ try {
         }, [theme, lang]);
         // Fail fast on the unreachable tile host so the fallback path is exercised deterministically.
         // (set SMOKE_REAL_TILES=1 to let requests through when the network allows it).
-        if (!process.env.SMOKE_REAL_TILES) await context.route(/tiles\.openfreemap\.org/, (r) => r.abort('internetdisconnected'));
+        await prepare(context);
         const page = await context.newPage();
         let current = '';
         page.on('console', (msg) => {
@@ -120,10 +136,11 @@ try {
   {
     const ctx = await browser.newContext({ ...DEVICES.desktop, colorScheme: 'light', reducedMotion: 'reduce', acceptDownloads: true });
     await ctx.addInitScript(() => {
-      try { localStorage.setItem('denguemap.theme', 'light'); localStorage.setItem('denguemap.lang', 'zh'); } catch {}
+      // only on first load: the pass switches theme/language itself and reloads to test persistence
+      try { if (!localStorage.getItem('denguemap.lang')) { localStorage.setItem('denguemap.theme', 'light'); localStorage.setItem('denguemap.lang', 'zh'); } } catch {}
       document.addEventListener('securitypolicyviolation', (e) => console.error(`CSP violation: ${e.violatedDirective} ${e.blockedURI}`));
     });
-    if (!process.env.SMOKE_REAL_TILES) await ctx.route(/tiles\.openfreemap\.org/, (r) => r.abort('internetdisconnected'));
+    await prepare(ctx);
     const page = await ctx.newPage();
     let step = 'start';
     page.on('console', (msg) => {
@@ -153,9 +170,16 @@ try {
       await page.check('input.seg-input[value="heat"]');
       await page.check('input.seg-input[value="towns"]');
       await page.check('input.seg-input[value="all"]');
-      await page.check('.switch-input');
-      await page.waitForTimeout(400);
-      if (!/type=all/.test(page.url()) || !/mode=towns/.test(page.url()) || !/ns1=1/.test(page.url())) failures.push(`[interact] URL state not updated: ${page.url()}`);
+      await page.getByRole('switch', { name: 'NS1 rapid-test clinics' }).check();
+      await page.getByRole('switch', { name: 'Mosquito risk villages' }).check();
+      await page.check('input.seg-input[value="type"]');
+      await page.waitForTimeout(600);
+      for (const k of ['type=all', 'mode=towns', 'ns1=1', 'mv=1', 'color=type']) if (!page.url().includes(k)) failures.push(`[interact] URL state missing ${k}: ${page.url()}`);
+      await page.check('input.seg-input[value="recency"]');
+      await page.check('input.seg-input[value="points"]');
+      await page.waitForTimeout(300);
+      if (!(await page.isVisible('.date-badge'))) failures.push('[interact] reference-date badge not shown in recency mode');
+      if ((await page.$$('.legend .lg-ns1')).length !== 1) failures.push('[interact] NS1 legend entry missing');
       step = 'play';
       await page.click('.play-btn');
       await page.waitForTimeout(900);
@@ -173,7 +197,7 @@ try {
       await resetIdle();
       await page.reload();
       await idle();
-      const restored = await page.evaluate(() => (document.querySelector('input.seg-input[value="towns"]'))?.checked);
+      const restored = await page.evaluate(() => (document.querySelector('input.seg-input[value="points"]'))?.checked && (document.querySelector('input[role="switch"]'))?.checked);
       if (!restored) failures.push('[interact] state not restored after reload');
       step = 'trends-theme';
       await page.click('a[data-route="trends"]');
@@ -189,13 +213,44 @@ try {
       await page.click('a[data-route="imported"]');
       await idle();
       await page.click('.rank-countries .rank-btn >> nth=0');
-      await page.waitForSelector('.notice-box .psec-title', { timeout: 5000 }).catch(() => failures.push('[interact] notices not shown'));
+      await page.waitForSelector('.country-card', { timeout: 5000 }).catch(() => failures.push('[interact] country panel not shown'));
       if (!/country=/.test(page.url())) failures.push('[interact] country not in URL');
+      if (!(await page.$('.country-card a[href^="https://ancientsky.github.io/safetravel/"]'))) failures.push('[interact] SafeTravel link missing');
+      // animation controls (reduced motion: static, but play/pause/scrub must work)
+      await page.click('.anim-box .play-btn');
+      await page.waitForTimeout(500);
+      await page.click('.anim-box .play-btn');
+      await page.$eval('.scrubber', (el) => { el.value = String(Number(el.min) + 30); el.dispatchEvent(new Event('input', { bubbles: true })); });
+      if (!/\d/.test((await page.textContent('.anim-counter')) ?? '')) failures.push('[interact] scrubber did not update the counter');
+      // advisory tab + layer switch
+      await page.click('[role="tab"]:has-text("Advisories")');
+      await page.check('input.seg-input[value="all"]');
+      await page.waitForTimeout(300);
+      if (!page.url().includes('adv=all') || !page.url().includes('tab=adv')) failures.push(`[interact] advisory state not in URL: ${page.url()}`);
+      // news feed: filter chip, paging, country button
+      await page.click('[role="tab"]:has-text("World news")');
+      const before = await page.$$eval('.tabpanel:not([hidden]) .news-item', (e) => e.length);
+      if (before < 1) failures.push('[interact] news feed empty');
+      if (await page.$('.more-btn')) {
+        await page.click('.more-btn');
+        const after = await page.$$eval('.tabpanel:not([hidden]) .news-item', (e) => e.length);
+        if (after <= before) failures.push('[interact] "more" did not load more news');
+      }
+      await page.click('.fchip[data-d="dengue"]');
+      const ds = await page.$$eval('.tabpanel:not([hidden]) .news-item', (els) => els.every((e) => e.querySelector('.d-dengue')));
+      if (!ds) failures.push('[interact] disease filter not applied');
+      await page.click('.tabpanel:not([hidden]) .cc-btn >> nth=0');
+      await page.waitForSelector('.country-card');
       const badLinks = await page.$$eval('a[target="_blank"]', (as) => as.filter((a) => !/noopener/.test(a.rel) || !/noreferrer/.test(a.rel)).length);
       if (badLinks) failures.push(`[interact] ${badLinks} external links without rel=noopener noreferrer`);
       step = 'vector-csv';
+      await resetIdle();
       await page.click('a[data-route="vector"]');
       await page.waitForSelector('.panel-vector .btn');
+      await idle();
+      await page.getByRole('switch', { name: 'Show recent cases' }).check();
+      await page.waitForSelector('.case-note .legend', { timeout: 10000 }).catch(() => failures.push('[interact] recent cases overlay not loaded'));
+      if (!page.url().includes('cases=1')) failures.push('[interact] cases toggle not in URL');
       const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('.panel-vector .btn:has-text("CSV")')]);
       const path = await dl.path();
       const { readFileSync } = await import('node:fs');
@@ -216,10 +271,33 @@ try {
     await ctx.close();
     console.log('interaction pass done');
   }
+  // Imported globe animation: capture mid-animation frames (motion allowed) in both themes.
+  for (const theme of THEMES) {
+    const ctx = await browser.newContext({ ...DEVICES.desktop, colorScheme: theme, reducedMotion: 'no-preference' });
+    await ctx.addInitScript((th) => { try { localStorage.setItem('denguemap.theme', th); localStorage.setItem('denguemap.lang', 'zh'); } catch {} }, theme);
+    await prepare(ctx);
+    const page = await ctx.newPage();
+    page.on('pageerror', (err) => failures.push(`[anim-${theme}] pageerror: ${err.message}`));
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' && !ALLOWED.test(msg.text()) && !ALLOWED.test(msg.location()?.url ?? '')) failures.push(`[anim-${theme}] console.error: ${msg.text()}`);
+    });
+    await page.goto(`${BASE}#/imported`);
+    await page.waitForFunction(() => document.body.dataset.mapIdle === '1', null, { timeout: 25000 }).catch(() => failures.push(`[anim-${theme}] map not idle`));
+    const playing = await page.evaluate(() => document.querySelector('.anim-box .play-btn')?.getAttribute('aria-pressed'));
+    if (playing !== 'true') failures.push(`[anim-${theme}] imported playback did not autoplay`);
+    await page.click('.anim-box .seg-input[value="4"]', { force: true });
+    for (const [i, ms] of [[1, 2500], [2, 2500], [3, 2500]]) {
+      await page.waitForTimeout(ms);
+      await page.screenshot({ path: join(OUT, `imported-anim-${i}-${theme}.png`) });
+    }
+    const counter = await page.textContent('.anim-counter');
+    if (!/\d/.test(counter ?? '')) failures.push(`[anim-${theme}] counter not updating`);
+    await ctx.close();
+  }
   // Performance probe: the largest year (2015, ~43k local cases) with all case types.
   {
     const ctx = await browser.newContext({ ...DEVICES.desktop, reducedMotion: 'reduce' });
-    if (!process.env.SMOKE_REAL_TILES) await ctx.route(/tiles\.openfreemap\.org/, (r) => r.abort('internetdisconnected'));
+    await prepare(ctx);
     const page = await ctx.newPage();
     page.on('pageerror', (err) => failures.push(`[perf] pageerror: ${err.message}`));
     const t0 = Date.now();

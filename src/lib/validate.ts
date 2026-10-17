@@ -3,9 +3,10 @@
 import type { Topology } from 'topojson-specification';
 import { isISODate } from './dates';
 import type {
-  CasePoint, CaseRow, CasesYear, Clusters, DataWarning, Hospital, Imported, ImportedCountry, LI, Manifest, NS1, Notice, Notices,
+  CasePoint, CaseRow, CasesYear, Clusters, DataWarning, ImportedEvent, Travel, TravelAdvisory, TravelNews, VbKey, Hospital, Imported, ImportedCountry, LI, Manifest, NS1, Notice, Notices,
   SourceStatus, Summary, Trend, Vector, VectorVillage, VectorWeek,
 } from './types';
+import { VB_KEYS } from './types';
 
 export class ValidationError extends Error {
   constructor(file: string, what: string) {
@@ -55,6 +56,7 @@ export function validateManifest(v: unknown): Manifest {
       if (isISODate(s.periodStart)) st.periodStart = s.periodStart;
       if (isISODate(s.periodEnd)) st.periodEnd = s.periodEnd;
       if (isISODate(s.sourceDate)) st.sourceDate = s.sourceDate;
+      if (typeof s.updated === 'string' && !Number.isNaN(Date.parse(s.updated))) st.updated = s.updated;
       sources[k] = st;
     }
   }
@@ -173,7 +175,66 @@ export function validateImported(v: unknown): Imported {
     if (Math.abs(c.lat) > 90 || Math.abs(c.lng) > 180) continue;
     countries[cc] = { zh: str(c.zh, 40) ?? cc.toUpperCase(), lat: c.lat, lng: c.lng, byYear: countMap(c.byYear, /^\d{4}$/), byMonth: countMap(c.byMonth, /^\d{4}-\d{2}$/) };
   }
-  return { from: v.from, to: v.to, countries };
+  let events: ImportedEvent[] | null = null;
+  if (Array.isArray(v.events)) {
+    events = [];
+    let sorted = true;
+    for (const e of v.events) {
+      if (!Array.isArray(e) || !isInt(e[0]) || e[0] < 0 || e[0] > 40_000 || typeof e[1] !== 'string' || !countries[e[1]] || !isInt(e[2]) || e[2] <= 0) continue;
+      if (events.length && events[events.length - 1]![0] > e[0]) sorted = false;
+      events.push([e[0], e[1], Math.min(e[2], 500)]);
+    }
+    if (!sorted) events.sort((a, b) => a[0] - b[0]);
+  }
+  return { from: v.from, to: v.to, countries, events };
+}
+
+// --------------------------------------------------------------------------- travel (v2)
+const VB_SET: ReadonlySet<string> = new Set(VB_KEYS);
+const lvl = (v: unknown): 0 | 1 | 2 | 3 => (v === 1 || v === 2 || v === 3 ? v : 0);
+export function validateTravel(v: unknown): Travel {
+  const F = 'travel.json';
+  need(isObj(v) && isObj(v.countries) && isObj(v.levels), F, 'not a travel object');
+  const levels = {} as Travel['levels'];
+  for (const k of ['1', '2', '3'] as const) {
+    const l = isObj(v.levels[k]) ? v.levels[k] : {};
+    levels[k] = { zh: str(l.zh, 60) ?? `第${k}級`, en: str(l.en, 60) ?? `Level ${k}`, adviceZh: str(l.adviceZh, 200) ?? '', adviceEn: str(l.adviceEn, 200) ?? '' };
+  }
+  const diseases = {} as Travel['diseases'];
+  const dv = isObj(v.diseases) ? v.diseases : {};
+  for (const k of VB_KEYS) {
+    const d = isObj(dv[k]) ? dv[k] : {};
+    diseases[k] = { zh: str(d.zh, 40) ?? k, en: str(d.en, 60) ?? k };
+  }
+  const countries: Travel['countries'] = {};
+  for (const [cc, c] of Object.entries(v.countries)) {
+    if (!/^[a-z]{2}$/.test(cc) || !isObj(c)) continue;
+    const vb: TravelAdvisory[] = [];
+    if (Array.isArray(c.vb)) {
+      for (const a of c.vb.slice(0, 20)) {
+        if (!isObj(a) || typeof a.d !== 'string' || !VB_SET.has(a.d) || !lvl(a.level)) continue;
+        vb.push({ d: a.d as VbKey, level: lvl(a.level) as 1 | 2 | 3, since: isISODate(a.since) ? a.since : '', areaZh: str(a.areaZh, 200) ?? '', areaEn: str(a.areaEn, 200) ?? '' });
+      }
+    }
+    countries[cc] = { zh: str(c.zh, 60) ?? cc, en: str(c.en, 60) ?? cc, level: lvl(c.level), vb };
+  }
+  const news: TravelNews[] = [];
+  if (Array.isArray(v.news)) {
+    for (const n of v.news.slice(0, 400)) {
+      if (!isObj(n) || !isISODate(n.date) || !Array.isArray(n.d)) continue;
+      const d = n.d.filter((x): x is VbKey => typeof x === 'string' && VB_SET.has(x));
+      if (!d.length) continue;
+      news.push({
+        id: str(n.id, 80) ?? `${n.date}-${news.length}`, date: n.date, d,
+        countries: Array.isArray(n.countries) ? n.countries.filter((x): x is string => typeof x === 'string' && /^[a-z]{2}$/.test(x)).slice(0, 40) : [],
+        headlineZh: str(n.headlineZh, 600) ?? '', headlineEn: str(n.headlineEn, 600) ?? '',
+        summaryZh: str(n.summaryZh, 600) ?? '', summaryEn: str(n.summaryEn, 600) ?? '',
+        url: typeof n.url === 'string' && SAFE_NOTICE_URL.test(n.url) ? n.url : null,
+      });
+    }
+    news.sort((a, b) => b.date.localeCompare(a.date));
+  }
+  return { updated: typeof v.updated === 'string' ? v.updated.slice(0, 40) : '', levels, diseases, countries, news };
 }
 
 // --------------------------------------------------------------------------- notices

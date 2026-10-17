@@ -22,7 +22,7 @@ describe('clampInt / oneOf', () => {
 describe('map params', () => {
   it('defaults to the latest year and its full range', () => {
     const p = normalizeMapParams({}, ctx);
-    expect(p).toEqual({ year: 2026, type: 'local', county: null, from: 1, to: 287, mode: 'points', ns1: false });
+    expect(p).toEqual({ year: 2026, type: 'local', county: null, from: 1, to: 287, mode: 'points', ns1: false, color: 'recency', mv: false });
     expect(maxDoyFor(2026, ctx.latestOnset)).toBe(287);
     expect(maxDoyFor(2024, ctx.latestOnset)).toBe(366);
   });
@@ -40,7 +40,7 @@ describe('map params', () => {
   });
   it('serialises without defaults and round-trips', () => {
     expect(serializeMapParams(normalizeMapParams({}, ctx), ctx)).toEqual({});
-    const p = normalizeMapParams({ year: '2015', type: 'all', county: '67000', from: '150', to: '300', mode: 'towns', ns1: '1' }, ctx);
+    const p = normalizeMapParams({ year: '2015', type: 'all', county: '67000', from: '150', to: '300', mode: 'towns', ns1: '1', color: 'type', mv: '1' }, ctx);
     const s = serializeMapParams(p, ctx);
     expect(normalizeMapParams(s, ctx)).toEqual(p);
   });
@@ -62,9 +62,10 @@ describe('other views', () => {
   it('imported year accepts "all" and valid years only', () => {
     const years = [2026, 2025, 2024, 2023];
     const cc = new Set(['vn', 'id']);
-    expect(normalizeImportedParams({}, years, cc)).toEqual({ year: 2026, country: null });
-    expect(normalizeImportedParams({ year: 'all', country: 'vn' }, years, cc)).toEqual({ year: null, country: 'vn' });
-    expect(normalizeImportedParams({ year: '1999', country: 'VN' }, years, cc)).toEqual({ year: 2026, country: null });
-    expect(serializeImportedParams({ year: null, country: 'id' }, years)).toEqual({ year: 'all', country: 'id' });
+    const d = { tab: 'rank', adv: 'vb' };
+    expect(normalizeImportedParams({}, years, cc)).toEqual({ year: 2026, country: null, ...d });
+    expect(normalizeImportedParams({ year: 'all', country: 'vn', tab: 'news', adv: 'all' }, years, cc)).toEqual({ year: null, country: 'vn', tab: 'news', adv: 'all' });
+    expect(normalizeImportedParams({ year: '1999', country: 'VN', tab: 'x', adv: 'y' }, years, cc)).toEqual({ year: 2026, country: null, ...d });
+    expect(serializeImportedParams({ year: null, country: 'id', tab: 'rank', adv: 'off' }, years)).toEqual({ year: 'all', country: 'id', adv: 'off' });
   });
 });

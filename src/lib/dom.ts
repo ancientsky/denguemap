@@ -51,7 +51,7 @@ export function $(sel: string, root: ParentNode = document): HTMLElement | null 
 }
 
 /** Safe external link: only whitelisted origins; opens in a new tab with noopener/noreferrer. */
-const SAFE_EXTERNAL = /^https:\/\/(www\.cdc\.gov\.tw|www\.nhi\.gov\.tw|github\.com\/ancientsky\/denguemap|cdcdengue\.azurewebsites\.net|data\.gov\.tw|openfreemap\.org|www\.openstreetmap\.org|openmaptiles\.org|maplibre\.org)(\/|$)/;
+const SAFE_EXTERNAL = /^https:\/\/(www\.cdc\.gov\.tw|www\.nhi\.gov\.tw|github\.com\/ancientsky\/denguemap|ancientsky\.github\.io\/safetravel|cdcdengue\.azurewebsites\.net|data\.gov\.tw|openfreemap\.org|www\.openstreetmap\.org|openmaptiles\.org|maplibre\.org)(\/|$)/;
 export function extLink(url: string, label: string, cls = 'ext'): HTMLElement {
   if (!SAFE_EXTERNAL.test(url)) return h('span', { class: cls }, label);
   const a = h('a', { class: cls, href: url, target: '_blank', rel: 'noopener noreferrer' }, label);

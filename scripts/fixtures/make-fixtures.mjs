@@ -1,9 +1,16 @@
 #!/usr/bin/env node
-// Generates REALISTIC but SYNTHETIC data conforming to docs/data-contract.md into public/data/.
-// The real pipeline (scripts/data/) overwrites these files; the app must not depend on fixture specifics.
-// Usage: npm run fixtures   (deterministic: seeded PRNG, "today" fixed to TODAY below unless FIXTURE_TODAY is set)
+// Generates REALISTIC but SYNTHETIC data conforming to docs/data-contract.md (incl. v2).
+// NEVER commit fixtures: public/data holds the real pipeline output.
+//
+//   npm run fixtures                    → full synthetic set in .fixtures/data/ (gitignored); preview it with
+//                                         SMOKE_DATA=.fixtures/data npm run smoke (served via request interception)
+//   npm run fixtures -- --out <dir>     → another directory
+//   npm run fixtures -- --v2-missing    → only writes v2 files that are MISSING from public/data
+//                                         (travel.json, geo/world.topo.json); never touches existing files
+// Deterministic: seeded PRNG, "today" fixed to TODAY below unless FIXTURE_TODAY is set.
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { buildTravel, buildWorld } from './v2.mjs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +21,11 @@ const { topology } = require('topojson-server');
 const { presimplify, simplify, quantile } = require('topojson-simplify');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const OUT = join(ROOT, 'public', 'data');
+const argv = process.argv.slice(2);
+const outArg = argv.indexOf('--out');
+const V2_MISSING = argv.includes('--v2-missing');
+const OUT = V2_MISSING ? join(ROOT, 'public', 'data') : outArg >= 0 ? join(process.cwd(), argv[outArg + 1]) : join(ROOT, '.fixtures', 'data');
+const SAFETRAVEL = process.env.SAFETRAVEL_DATA || '/home/user/ancientsky/safetravel/web/data';
 const TODAY = process.env.FIXTURE_TODAY || '2026-10-16';
 const LATEST_ONSET = addDays(TODAY, -2);
 
@@ -100,7 +111,16 @@ function randomPointIn(feature) {
 }
 
 // ======================================================================
+if (V2_MISSING) {
+  // Fill in only the v2 files the real data set does not have yet (local testing aid).
+  for (const [rel, make] of [['travel.json', () => buildTravel(SAFETRAVEL, TODAY)], ['geo/world.topo.json', buildWorld]]) {
+    if (existsSync(join(OUT, rel))) console.log(`  ${rel.padEnd(32)} exists — kept`);
+    else out(rel, make());
+  }
+  process.exit(0);
+}
 console.log(`Generating fixtures into ${OUT} (today=${TODAY})`);
+if (OUT === join(ROOT, 'public', 'data')) throw new Error('Refusing to overwrite public/data (real data) with fixtures');
 if (existsSync(OUT)) rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
@@ -301,6 +321,7 @@ const countries = {
 };
 const imp = {};
 let impFrom = '2023-01-01';
+const evMap = new Map(); // `${dayIndex}|${cc}` -> n
 for (const year of caseYears.filter((y) => y >= 2023)) {
   for (const [doy, , isImp] of generated[year].caseList) {
     if (!isImp) continue;
@@ -309,13 +330,22 @@ for (const year of caseYears.filter((y) => y >= 2023)) {
     imp[cc] ??= { zh: countries[cc][0], lat: countries[cc][1], lng: countries[cc][2], byYear: {}, byMonth: {} };
     imp[cc].byYear[year] = (imp[cc].byYear[year] || 0) + 1;
     imp[cc].byMonth[d.slice(0, 7)] = (imp[cc].byMonth[d.slice(0, 7)] || 0) + 1;
+    const di = Math.round((parseDate(d) - parseDate(impFrom)) / 86400000);
+    evMap.set(`${di}|${cc}`, (evMap.get(`${di}|${cc}`) || 0) + 1);
   }
 }
+const events = [...evMap.entries()].map(([k, n]) => { const [di, cc] = k.split('|'); return [Number(di), cc, n]; })
+  .sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]));
 for (const v of Object.values(imp)) {
   v.byYear = Object.fromEntries(Object.entries(v.byYear).sort());
   v.byMonth = Object.fromEntries(Object.entries(v.byMonth).sort());
 }
-out('imported.json', { from: impFrom, to: LATEST_ONSET, countries: Object.fromEntries(Object.entries(imp).sort((a, b) => a[0].localeCompare(b[0]))) });
+out('imported.json', { from: impFrom, to: LATEST_ONSET, countries: Object.fromEntries(Object.entries(imp).sort((a, b) => a[0].localeCompare(b[0]))), events });
+
+// ---------- v2: travel.json + geo/world.topo.json ----------
+const travel = buildTravel(SAFETRAVEL, TODAY);
+out('travel.json', travel);
+out('geo/world.topo.json', buildWorld());
 
 const noticeTexts = [
   (zh) => `${zh}衛生單位統計，今年累計登革熱病例數較去年同期上升，近期仍處流行季，以東南部及沿海城市病例較多。疾管署提醒民眾前往當地應做好防蚊措施，穿著淺色長袖衣褲並使用含 DEET、Picaridin 或 IR3535 等有效成分之防蚊藥劑。`,
@@ -456,6 +486,7 @@ out('manifest.json', {
     clusters: { ok: true, stale: false, fetchedAt: gen, records: 2 },
     vector: { ok: true, stale: false, fetchedAt: `${addDays(weekEnd, 2)}T02:00:00Z`, records: villages.length, periodStart: weeks[4][0], periodEnd: weeks[0][1] },
     ns1: { ok: true, stale: false, fetchedAt: gen, records: ns1Count, sourceDate: '2016-06-03' },
+    travel: { ok: true, stale: false, fetchedAt: gen, records: travel.news.length, updated: travel.updated },
   },
   warnings,
   files: Object.fromEntries([...written.entries()].sort()),

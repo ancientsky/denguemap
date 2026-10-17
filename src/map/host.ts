@@ -35,7 +35,7 @@ const OSM_ATTR =
 export interface OverlayCtx {
   map: MLMap;
   palette: Palette;
-  /** Insert data layers below this basemap layer (first label layer) so place names stay readable. */
+  /** Always undefined: data layers are added on top of the basemap. */
   beforeId: string | undefined;
   fallback: boolean;
   theme: Theme;
@@ -90,7 +90,7 @@ export class MapHost {
     this.map.addControl(new AttributionControl({ compact: true }), 'bottom-right');
 
     this.map.on('style.load', () => this.onStyleLoad());
-    this.map.on('error', (e) => this.onError(e as unknown as { sourceId?: string; tile?: unknown }));
+    this.map.on('error', (e) => this.onError(e as unknown as { sourceId?: string; tile?: unknown; error?: { message?: string } }));
     this.map.on('sourcedata', (e) => {
       if (this.mode === 'remote' && e.sourceId === 'openmaptiles' && e.tile) this.tilesOk = true;
     });
@@ -143,16 +143,18 @@ export class MapHost {
     if (wasRemote) this.basemapChanged.emit('fallback');
   }
 
-  private onError(e: { sourceId?: string; tile?: unknown }): void {
-    if (this.mode !== 'remote') return; // our own style: nothing third-party can fail
-    if (!this.styleReady) {
+  private onError(e: { sourceId?: string; tile?: unknown; error?: { message?: string } }): void {
+    if (this.mode === 'remote' && !this.styleReady) {
       void this.useFallback();
       return;
     }
-    if (e.tile || e.sourceId === 'openmaptiles') {
+    if (this.mode === 'remote' && (e.tile || e.sourceId === 'openmaptiles')) {
       this.tileErrors++;
       if (!this.tilesOk && this.tileErrors >= 3) void this.useFallback();
+      return;
     }
+    // Anything else (e.g. an invalid layer expression in our overlays) is a bug: surface it.
+    console.error('[map]', e.error?.message ?? e);
   }
 
   private onStyleLoad(): void {
@@ -204,9 +206,12 @@ export class MapHost {
   }
 
   // ------------------------------------------------------------------ overlays
+  /**
+   * Data layers go on TOP of the basemap (owner feedback: labels/halos were cutting through markers),
+   * so overlays get no beforeId.
+   */
   private firstLabelLayer(): string | undefined {
-    if (this.mode !== 'remote') return undefined;
-    return this.map.getStyle()?.layers.find((l) => l.type === 'symbol')?.id;
+    return undefined;
   }
 
   private installOverlay(): void {
@@ -258,7 +263,8 @@ export class MapHost {
 
   showPopup(lngLat: LngLatLike, content: HTMLElement, hover = false): Popup {
     this.popup?.remove();
-    this.popup = new Popup({ closeButton: !hover, closeOnClick: true, maxWidth: '300px', offset: 10, className: 'dm-popup', focusAfterOpen: !hover })
+    const wide = content.classList.contains('pop-vector');
+    this.popup = new Popup({ closeButton: !hover, closeOnClick: true, maxWidth: wide ? 'min(400px, 92vw)' : '300px', offset: 10, className: 'dm-popup', focusAfterOpen: !hover })
       .setLngLat(lngLat)
       .setDOMContent(content)
       .addTo(this.map);

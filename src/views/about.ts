@@ -6,7 +6,7 @@ import type { View, ViewContext } from './types';
 import { warningText } from './ui';
 import { sourceState } from '../lib/warnings';
 
-const SOURCES = ['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1'] as const;
+const SOURCES = ['cases', 'imported', 'notices', 'clusters', 'vector', 'ns1', 'travel'] as const;
 
 export default async function aboutView(ctx: ViewContext): Promise<View> {
   const { app, root } = ctx;
@@ -33,7 +33,9 @@ export default async function aboutView(ctx: ViewContext): Promise<View> {
       h('ul', { class: 'link-list' },
         h('li', null, linkWithIcon('https://cdcdengue.azurewebsites.net/', t('about.oldSite'))),
         h('li', null, linkWithIcon('https://www.cdc.gov.tw/Category/List/f5Ef_aQRbEKr5hJ51YgIWw', t('about.cdcLink'))),
-        h('li', null, linkWithIcon('https://data.gov.tw/', 'data.gov.tw')))),
+        h('li', null, linkWithIcon('https://data.gov.tw/', 'data.gov.tw')),
+        h('li', null, linkWithIcon('https://ancientsky.github.io/safetravel/', 'SafeTravel TW'))),
+      h('p', { class: 'card-note' }, t('about.safetravel'))),
     card('calendar', t('about.cadenceH'), h('p', null, t('about.cadence'))),
     card('pin', t('about.privacyH'), h('p', null, t('about.privacy'))),
     card('vector', t('about.riskH'), risk),
