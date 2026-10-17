@@ -88,7 +88,9 @@ TopoJSON（由 taiwan-atlas `towns-10t.json` 精簡、量化），兩個 object�
   "last30":{ "local": 3, "imported": 33 },
   "prevYtd": { "local": 20, "imported": 160 },        // 去年同期（1/1 到去年同月同日）
   "byCounty": { "64000": { "local": 10, "imported": 32 } },   // 今年累計
-  "topTowns14": [["64000090", 2, 0]]                  // 近 14 天 [townCode, local, imported]，依 local 遞減，最多 20
+  "topTowns14": [["64000090", 2, 0]],                 // 近 14 天 [townCode, local, imported]，依 local 遞減，最多 20
+  "townNames": { "64000090": { "county": "64000", "countyZh": "高雄市", "countyEn": "Kaohsiung City", "zh": "前鎮區", "en": "Qianzhen District" } }
+                                                      // topTowns14 中各鄉鎮的名稱（內政部名稱，臺字；英文來自 taiwan-atlas），供外部網站（如新官網疫情小卡）不需代碼表即可顯示
 }
 ```
 

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
-  buildCasesOutputs, buildYearFile, normalizeRecords, yearTotals,
+  buildCasesOutputs, buildTrendAndSummary, buildYearFile, normalizeRecords, townNameLookup, yearTotals,
 } from '../../scripts/data/sources/cases.mjs';
 import { validateFileShape } from '../../scripts/data/validate.mjs';
 import { LOCATION_RECORDS } from './fixtures/samples.mjs';
@@ -131,5 +131,29 @@ describe('buildCasesOutputs: trend + summary', () => {
   it('is byte-identical for identical input', () => {
     const again = buildCasesOutputs(byYear, locate, today);
     expect(again.files).toEqual(out.files);
+  });
+});
+
+describe('summary.townNames', () => {
+  const geo = {
+    counties: [{ code: '64000', zh: '高雄市', en: 'Kaohsiung City' }],
+    towns: [{ code: '64000090', county: '64000', zh: '前鎮區', en: 'Qianzhen District' }],
+  };
+  const lookup = townNameLookup(geo);
+  it('looks up MOI names by town code', () => {
+    expect(lookup('64000090')).toEqual({ county: '64000', countyZh: '高雄市', countyEn: 'Kaohsiung City', zh: '前鎮區', en: 'Qianzhen District' });
+    expect(lookup('99999999')).toBeNull();
+  });
+  it('names exactly the towns in topTowns14', () => {
+    const day = '2026-10-15';
+    const rows = new Map([[2026, [{ date: day, doy: 288, lng: 120.3, lat: 22.6, imp: 0, count: 2 }]]]);
+    const { summary } = buildTrendAndSummary(rows, () => '64000090', '2026-10-16', lookup);
+    expect(summary.topTowns14).toEqual([['64000090', 2, 0]]);
+    expect(Object.keys(summary.townNames)).toEqual(['64000090']);
+    expect(summary.townNames['64000090'].zh).toBe('前鎮區');
+  });
+  it('omits names when no lookup is given (backward compatible)', () => {
+    const rows = new Map([[2026, [{ date: '2026-10-15', doy: 288, lng: 120.3, lat: 22.6, imp: 0, count: 1 }]]]);
+    expect(buildTrendAndSummary(rows, () => '64000090', '2026-10-16').summary.townNames).toEqual({});
   });
 });

@@ -10,6 +10,25 @@ import {
 } from '../util.mjs';
 
 /**
+ * @typedef {{county:string, countyZh:string, countyEn:string, zh:string, en:string}} TownName
+ */
+
+/**
+ * Town-name lookup from the admin geography (MOI names, 臺 form; English from taiwan-atlas).
+ * @param {{towns: Array<{code:string, county:string, zh:string, en:string}>, counties: Array<{code:string, zh:string, en:string}>}} geo
+ * @returns {(code:string)=>TownName|null}
+ */
+export function townNameLookup(geo) {
+  const counties = new Map(geo.counties.map((c) => [c.code, c]));
+  const towns = new Map(geo.towns.map((t) => [t.code, t]));
+  return (code) => {
+    const t = towns.get(code);
+    const c = t && counties.get(t.county);
+    return t && c ? { county: c.code, countyZh: c.zh, countyEn: c.en, zh: t.zh, en: t.en } : null;
+  };
+}
+
+/**
  * @typedef {object} CaseRow
  * @property {string} date  YYYY-MM-DD
  * @property {number} doy   1-366
@@ -115,8 +134,9 @@ export function yearTotals(file) {
  * @param {Map<number, CaseRow[]>} rowsByYear
  * @param {(lng:number, lat:number)=>string|null} locateTown
  * @param {string} todayIso
+ * @param {(code:string)=>TownName|null} [townName] names for summary.townNames (optional)
  */
-export function buildTrendAndSummary(rowsByYear, locateTown, todayIso) {
+export function buildTrendAndSummary(rowsByYear, locateTown, todayIso, townName) {
   const startIso = `${FIRST_YEAR}-01-01`;
   const startDays = daysFromIso(startIso);
   const todayDays = daysFromIso(todayIso);
@@ -186,6 +206,15 @@ export function buildTrendAndSummary(rowsByYear, locateTown, todayIso) {
     .sort((a, b) => b[1].local - a[1].local || b[1].imported - a[1].imported || cmp(a[0], b[0]))
     .slice(0, 20)
     .map(([code, v]) => [code, v.local, v.imported]);
+  // Names for the towns listed above, so consumers (e.g. the new CDC site's card) need no code list.
+  /** @type {Record<string, TownName>} */
+  const townNames = {};
+  if (townName) {
+    for (const [code] of topTowns14) {
+      const nm = townName(/** @type {string} */ (code));
+      if (nm) townNames[/** @type {string} */ (code)] = nm;
+    }
+  }
   const summary = {
     asOf: todayIso,
     latestOnset,
@@ -197,6 +226,7 @@ export function buildTrendAndSummary(rowsByYear, locateTown, todayIso) {
     prevYtd,
     byCounty: Object.fromEntries([...byCounty.keys()].sort(cmp).map((k) => [k, byCounty.get(k)])),
     topTowns14,
+    townNames,
   };
   return { trend, summary, latestOnset };
 }
@@ -207,7 +237,7 @@ export function buildTrendAndSummary(rowsByYear, locateTown, todayIso) {
  * @param {(lng:number, lat:number)=>string|null} locateTown
  * @param {string} todayIso
  */
-export function buildCasesOutputs(rowsByYear, locateTown, todayIso) {
+export function buildCasesOutputs(rowsByYear, locateTown, todayIso, townName) {
   /** @type {Record<string,string>} */
   const files = {};
   /** @type {Record<number, {local:number, imported:number}>} */
@@ -222,7 +252,7 @@ export function buildCasesOutputs(rowsByYear, locateTown, todayIso) {
     nullTown += nt;
     uniquePts += up;
   }
-  const { trend, summary, latestOnset } = buildTrendAndSummary(rowsByYear, locateTown, todayIso);
+  const { trend, summary, latestOnset } = buildTrendAndSummary(rowsByYear, locateTown, todayIso, townName);
   files['trend.json'] = toJson(trend);
   files['summary.json'] = toJson(summary);
   return { files, totals, nullTown, uniquePts, records, latestOnset, years };
@@ -256,7 +286,7 @@ export async function buildCases(ctx) {
     input += r.input;
   }
   log(`cases: fetched ${input} records in ${Date.now() - t0} ms`);
-  const out = buildCasesOutputs(rowsByYear, geo.locateTown, todayIso);
+  const out = buildCasesOutputs(rowsByYear, geo.locateTown, todayIso, townNameLookup(geo));
   const dropped = Object.values(drops).reduce((a, b) => a + b, 0);
   return {
     files: out.files,

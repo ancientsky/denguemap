@@ -155,6 +155,13 @@ export function validateFileShape(path, text) {
     if (j.latestOnset !== '' && !isDate(j.latestOnset)) err('bad latestOnset');
     for (const k of ['ytd', 'last7', 'last14', 'last30', 'prevYtd']) if (!isInt(j[k]?.local) || !isInt(j[k]?.imported)) err(`bad ${k}`);
     if (!Array.isArray(j.topTowns14) || j.topTowns14.length > 20) err('bad topTowns14');
+    if (j.townNames !== undefined) {
+      if (!j.townNames || typeof j.townNames !== 'object' || Array.isArray(j.townNames)) err('bad townNames');
+      for (const [code, v] of Object.entries(j.townNames)) {
+        if (!/^\d{8}$/.test(code) || !v || typeof v !== 'object') err('bad townNames entry');
+        for (const k of ['county', 'countyZh', 'countyEn', 'zh', 'en']) if (typeof v[k] !== 'string' || v[k].length > 60) err('bad townNames field');
+      }
+    }
   } else if (path === 'imported.json') {
     if (!isDate(j.from) || !isDate(j.to) || typeof j.countries !== 'object') err('bad header');
     for (const [cc, c] of Object.entries(j.countries)) {
