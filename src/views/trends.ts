@@ -34,7 +34,7 @@ interface Theme {
 function readTheme(): Theme {
   return {
     text: cssVar('--text'), muted: cssVar('--muted'), border: cssVar('--border-strong'), split: cssVar('--border'), surface: cssVar('--surface'),
-    local: cssVar('--local'), imported: cssVar('--imported'), accent: cssVar('--accent'), font: getComputedStyle(document.body).fontFamily,
+    local: cssVar('--trend-local'), imported: cssVar('--trend-imported'), accent: cssVar('--accent'), font: getComputedStyle(document.body).fontFamily,
   };
 }
 const yearColor = (i: number) => {
@@ -81,8 +81,8 @@ export default async function trendsView(ctx: ViewContext): Promise<View> {
       persist();
     }),
     segmented<CaseType>(t('trends.typeFor'), [
-      { value: 'local', label: t('common.local'), swatch: 'var(--local)' },
-      { value: 'imported', label: t('common.importedShort'), swatch: 'var(--imported)' },
+      { value: 'local', label: t('common.local'), swatch: 'var(--trend-local)' },
+      { value: 'imported', label: t('common.importedShort'), swatch: 'var(--trend-imported)' },
       { value: 'all', label: t('common.all') },
     ], st.type, (v) => {
       st = { ...st, type: v };

@@ -28,8 +28,8 @@ export interface Palette {
 export function readPalette(): Palette {
   const v = (n: string, d: string) => cssVar(n) || d;
   return {
-    local: v('--local', '#cf1f45'),
-    imported: v('--imported', '#2a78d6'),
+    local: v('--local', '#d1193e'),
+    imported: v('--imported', '#d97706'),
     accent: v('--accent', '#0f766e'),
     text: v('--text', '#0f172a'),
     halo: v('--map-halo', '#ffffff'),
