@@ -150,3 +150,47 @@ TopoJSON，object `villages`：只含 vector.json 中 `villCode` 非 null 的村
   "h": [["長庚紀念醫院", "臺北市松山區敦化北路199號", "02-27135211", 121.54962, 25.05551, "1101010012", "63000"], …] }
 ```
 `[name, address, tel, lng, lat, hospID, countyCode]`。
+
+---
+
+## v2 增補（2026-10-17）
+
+### imported.json：新增 `events`
+
+```jsonc
+{ "from": "2023-01-01", "to": "2026-10-14", "countries": { … },
+  "events": [[0, "ph", 1], [3, "vn", 2], …] }   // [dayIndex(自 from 起算 0-based), 國碼, 當日病例數]，依 dayIndex、國碼排序
+```
+供境外移入地球的逐日播放動畫使用。
+
+### travel.json（新檔；來源：ancientsky/safetravel 的 `web/data/alerts.json`、`epidemics.json`）
+
+```jsonc
+{
+  "updated": "2026-10-16T21:17:38+08:00",          // safetravel 資料的 generated_at（原樣，ISO 含時區）
+  "levels": { "1": { "zh": "第一級：注意", "en": "Level 1: Watch", "adviceZh": "提醒遵守當地的一般預防措施", "adviceEn": "Practice usual precautions" }, "2": { … }, "3": { … } },
+  "diseases": {                                     // 只收蚊媒傳染病；key 固定
+    "dengue": { "zh": "登革熱", "en": "Dengue" }, "chikungunya": { … }, "zika": { … },
+    "yellowFever": { … }, "malaria": { … }, "japaneseEncephalitis": { … }, "westNile": { … }
+  },
+  "countries": {                                    // 國碼小寫 ISO2；只收有任何有效建議的國家
+    "vn": { "zh": "越南", "en": "Vietnam",
+            "level": 1,                             // 所有疾病中最高等級（含全球性建議）
+            "vb": [ { "d": "dengue", "level": 1, "since": "2025-06-01", "areaZh": "", "areaEn": "" } ] }  // 蚊媒疾病的建議（可空）
+  },
+  "news": [                                         // 蚊媒疾病的國際疫情新聞，近 2 年，依 date 遞減，最多 300 則
+    { "id": "…", "date": "2026-10-15", "d": ["dengue"], "countries": ["vn", "th"],
+      "headlineZh": "…", "headlineEn": "…", "summaryZh": "…", "summaryEn": "…",
+      "url": "https://www.cdc.gov.tw/…" }           // 非 https://www.cdc.gov.tw/ 開頭者為 null
+  ]
+}
+```
+疾病對照（safetravel 中文病名 → key）：登革熱→dengue、屈公病→chikungunya、茲卡病毒感染症→zika、黃熱病→yellowFever、瘧疾→malaria、日本腦炎→japaneseEncephalitis、西尼羅熱→westNile。一則新聞的 `disease_zh` 可能以逗號列出多個病名，只要含任一蚊媒病名就收，`d` 只列蚊媒的 key。所有文字 NFKC、去 HTML、長度上限 600。
+
+### geo/world.topo.json（新檔，建置時由 npm `world-atlas` 產生；不需每次重抓）
+
+TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-countries` 由 numeric id 轉 alpha-2，轉不到的國家略過；不含南極洲）。必須包含新加坡（sg）、馬爾地夫（mv）等小國（用 50m 版再簡化），gzip ≤ 120 KB。國名由前端 `Intl.DisplayNames` 產生。
+
+### manifest.sources.travel
+
+`{ "ok", "stale", "fetchedAt", "records"(新聞則數), "updated"(= travel.updated) }`，語意同其他來源。
