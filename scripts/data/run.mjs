@@ -28,7 +28,7 @@ import { buildVectorSource } from './sources/vector.mjs';
 import { buildWorldFile } from './world.mjs';
 import { toJson, isoUtc, twDate, parseYmd } from './util.mjs';
 import {
-  computeWarnings, validateCases, validateFileShape, validateImported, validateNs1, validateTravel, validateVector,
+  computeWarnings, ShrinkError, validateCases, validateFileShape, validateImported, validateNs1, validateTravel, validateVector,
 } from './validate.mjs';
 import {
   buildManifest, hashFiles, manifestChanged, manifestToJson, readJson, writeIfChanged,
@@ -67,6 +67,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
  * @param {boolean} [options.allowShrink]
  * @param {string|null} [options.summaryPath]
  * @param {()=>Promise<any>} [options.atlasLoader]
+ * @param {number[]} [options.retryDelaysMs] waits before re-fetching a cases/imported source that failed the shrink guard (default 90 s, 180 s; 0 s when backoffMs is 0)
  * @param {string[]} [options.only] restrict to these source names (debug)
  */
 export async function run(options = {}) {
@@ -92,23 +93,36 @@ export async function run(options = {}) {
   const ctxP = loadGeo(options.atlasLoader ? { atlasLoader: options.atlasLoader } : {}).then((geo) => ({ http, travelHttp, geo, todayIso, log }));
   ctxP.catch(() => {});
 
+  // The backend sometimes answers with truncated history; it usually recovers within minutes.
+  const retryDelays = options.retryDelaysMs ?? (options.backoffMs === 0 ? [0, 0] : [90_000, 180_000]);
+
   /**
    * @param {string} name
    * @param {(ctx:Ctx)=>Promise<{files:Record<string,string>, meta:any}>} fn
+   * @param {{retryOnShrink?: boolean}} [opts] re-run `fn` after a ShrinkError (waits per retryDelays)
    * @returns {Promise<SourceResult>}
    */
-  const guarded = async (name, fn) => {
+  const guarded = async (name, fn, opts = {}) => {
     const t0 = Date.now();
-    try {
-      const ctx = await ctxP;
-      const out = await fn(ctx);
-      for (const [p, text] of Object.entries(out.files)) validateFileShape(p, text);
-      log(`[${name}] ok in ${Date.now() - t0} ms: ${JSON.stringify(summarize(out.meta))}`);
-      return { name, ok: true, files: out.files, meta: out.meta };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log(`[${name}] FAILED: ${msg}`);
-      return { name, ok: false, error: msg };
+    const maxAttempts = 1 + (opts.retryOnShrink ? retryDelays.length : 0);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const ctx = await ctxP;
+        const out = await fn(ctx);
+        for (const [p, text] of Object.entries(out.files)) validateFileShape(p, text);
+        log(`[${name}] ok in ${Date.now() - t0} ms${attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : ''}: ${JSON.stringify(summarize(out.meta))}`);
+        return { name, ok: true, files: out.files, meta: out.meta };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (e instanceof ShrinkError && attempt < maxAttempts) {
+          const wait = retryDelays[attempt - 1];
+          log(`[${name}] attempt ${attempt}/${maxAttempts} below the committed counts (${msg}); re-fetching in ${wait} ms`);
+          if (wait > 0) await new Promise((r) => { setTimeout(r, wait); });
+          continue;
+        }
+        log(`[${name}] FAILED${maxAttempts > 1 ? ` after ${attempt}/${maxAttempts} attempt(s)` : ''}: ${msg}`);
+        return { name, ok: false, error: msg };
+      }
     }
   };
 
@@ -124,7 +138,7 @@ export async function run(options = {}) {
       prevTotals, reference: options.reference === undefined ? REFERENCE_COUNTS : options.reference, allowShrink, currentYear,
     });
     return out;
-  }) : null;
+  }, { retryOnShrink: true }) : null;
 
   const importedP = wanted('imported') ? guarded('imported', async (ctx) => {
     const out = await buildImportedSource(ctx);
@@ -132,7 +146,7 @@ export async function run(options = {}) {
     const prevRecords = prev ? Object.values(prev.countries ?? {}).reduce((a, c) => a + Object.values(/** @type {any} */ (c).byYear ?? {}).reduce((x, y) => x + Number(y), 0), 0) : null;
     validateImported(out.meta, prevRecords);
     return out;
-  }) : null;
+  }, { retryOnShrink: true }) : null;
 
   const noticesP = wanted('notices') ? guarded('notices', async (ctx) => {
     const imp = importedP ? await importedP : null;

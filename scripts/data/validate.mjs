@@ -8,6 +8,12 @@ import {
 } from './config.mjs';
 import { daysFromIso } from './util.mjs';
 
+/** A count fell below the committed data / reference: often a transient truncated upstream response. */
+export class ShrinkError extends Error {
+  /** @param {string} msg */
+  constructor(msg) { super(msg); this.name = 'ShrinkError'; }
+}
+
 /** @param {boolean} cond @param {string} msg */
 function ensure(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -68,7 +74,7 @@ export function validateCases(res, opts) {
   if (!opts.allowShrink) {
     const reference = opts.reference === undefined ? REFERENCE_COUNTS : opts.reference;
     const problems = checkShrink(res.totals, opts.prevTotals, reference);
-    ensure(problems.length === 0, `case counts shrank: ${problems.join('; ')}`);
+    if (problems.length) throw new ShrinkError(`case counts shrank: ${problems.join('; ')}`);
   }
 }
 
@@ -78,7 +84,7 @@ export function validateCases(res, opts) {
  */
 export function validateImported(meta, prevRecords) {
   ensure(meta.records > 0, 'no imported records');
-  if (prevRecords) ensure(meta.records >= prevRecords - allowedShrink(prevRecords), `imported shrank: ${meta.records} < ${prevRecords}`);
+  if (prevRecords && meta.records < prevRecords - allowedShrink(prevRecords)) throw new ShrinkError(`imported shrank: ${meta.records} < ${prevRecords}`);
 }
 
 /**
