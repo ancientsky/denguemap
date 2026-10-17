@@ -1,5 +1,5 @@
 // #/about — 資料說明: sources, cadence, privacy, risk definitions, disclaimer, per-source freshness.
-import { fmtDate, fmtDateTime, fmtNum, t, type MessageKey } from '../i18n';
+import { fmtDate, fmtDateTime, fmtNum, getLang, t, type MessageKey } from '../i18n';
 import { extLink, h } from '../lib/dom';
 import { icon, type IconName } from '../lib/icons';
 import type { View, ViewContext } from './types';
@@ -25,6 +25,7 @@ export default async function aboutView(ctx: ViewContext): Promise<View> {
     h('span', { class: 'def-name' }, t(`vector.risk${r}` as MessageKey)),
     h('span', { class: 'def-text' }, t(`vector.def${r}` as MessageKey)))));
 
+  const NEW_SITE = 'https://ancientsky.github.io/new_cdc_prototype/';
   const freshCard = card('clock', t('about.freshH'), h('div', { class: 'view-loading' }, t('app.loading')));
   const qualityList = h('ul', { class: 'quality-list' });
   const qualityCard = card('alert', t('about.qualityH'), qualityList);
@@ -35,7 +36,14 @@ export default async function aboutView(ctx: ViewContext): Promise<View> {
         h('li', null, linkWithIcon('https://www.cdc.gov.tw/Category/List/f5Ef_aQRbEKr5hJ51YgIWw', t('about.cdcLink'))),
         h('li', null, linkWithIcon('https://data.gov.tw/', 'data.gov.tw')),
         h('li', null, linkWithIcon('https://ancientsky.github.io/safetravel/', 'SafeTravel TW'))),
-      h('p', { class: 'card-note' }, t('about.safetravel'))),
+      h('p', { class: 'card-note' }, t('about.safetravel')),
+      h('p', { class: 'card-note' }, t('about.preventionNote')),
+      h('ul', { class: 'link-list' },
+        // Reverse links agreed in new_cdc_prototype docs/denguemap-integration.md §1.3: prevention guidance
+        // lives on the official site, not here.
+        h('li', null, linkWithIcon(`${NEW_SITE}${getLang() === 'en' ? 'en/' : ''}diseases/dengue/`, t('about.newSiteDengue'))),
+        h('li', null, linkWithIcon(`${NEW_SITE}${getLang() === 'en' ? 'en/' : ''}diseases/dengue/#prevention`, t('about.newSitePrevention'))),
+        h('li', null, h('a', { href: 'tel:1922' }, t('about.hotline'))))),
     card('calendar', t('about.cadenceH'), h('p', null, t('about.cadence'))),
     card('pin', t('about.privacyH'), h('p', null, t('about.privacy'))),
     card('vector', t('about.riskH'), risk),

@@ -28,8 +28,8 @@ export function applyAttrs(el: HTMLElement, attrs: Attrs): void {
     else if (k === 'style') for (const [p, val] of Object.entries(v as Record<string, string>)) el.style.setProperty(p, val);
     else if (k === 'href') {
       const s = String(v);
-      // Only same-document hashes, relative paths, or https URLs.
-      if (/^(#|\.\/|https:\/\/)/.test(s)) el.setAttribute('href', s);
+      // Only same-document hashes, relative paths, https URLs, or digit-only tel: links (NS1 clinics, 1922).
+      if (/^(#|\.\/|https:\/\/)/.test(s) || /^tel:[\d#*+]{3,20}$/.test(s)) el.setAttribute('href', s);
     } else if (/^on/i.test(k)) continue; // never allow inline event handler attributes
     else el.setAttribute(k, v === true ? '' : String(v));
   }
@@ -51,7 +51,7 @@ export function $(sel: string, root: ParentNode = document): HTMLElement | null 
 }
 
 /** Safe external link: only whitelisted origins; opens in a new tab with noopener/noreferrer. */
-const SAFE_EXTERNAL = /^https:\/\/(www\.cdc\.gov\.tw|www\.nhi\.gov\.tw|github\.com\/ancientsky\/denguemap|ancientsky\.github\.io\/safetravel|cdcdengue\.azurewebsites\.net|data\.gov\.tw|openfreemap\.org|www\.openstreetmap\.org|openmaptiles\.org|maplibre\.org)(\/|$)/;
+const SAFE_EXTERNAL = /^https:\/\/(www\.cdc\.gov\.tw|www\.nhi\.gov\.tw|github\.com\/ancientsky\/denguemap|ancientsky\.github\.io\/safetravel|ancientsky\.github\.io\/new_cdc_prototype|cdcdengue\.azurewebsites\.net|data\.gov\.tw|openfreemap\.org|www\.openstreetmap\.org|openmaptiles\.org|maplibre\.org)(\/|$)/;
 export function extLink(url: string, label: string, cls = 'ext'): HTMLElement {
   if (!SAFE_EXTERNAL.test(url)) return h('span', { class: cls }, label);
   const a = h('a', { class: cls, href: url, target: '_blank', rel: 'noopener noreferrer' }, label);
