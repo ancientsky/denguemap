@@ -1123,6 +1123,13 @@ try {
       const s = await page.evaluate(() => ({ kpis: document.querySelectorAll('.kpi').length, foci: document.querySelectorAll('.list-cards .card-btn').length,
         actual: !!document.querySelector('.fc-legend .lg-actual'), canvases: document.querySelectorAll('.chart canvas').length }));
       if (s.kpis !== 4 || s.foci < 3 || !s.actual || s.canvases < 2) failures.push(`[forecast] replay incomplete: ${JSON.stringify(s)}`);
+      // 14-day risk area: summary + toggle; switching it off is shareable state.
+      if (!(await page.$('.fc-risk .switch-input'))) failures.push('[forecast] risk-area toggle missing');
+      else {
+        await page.locator('.fc-risk .switch-input').uncheck();
+        await page.waitForFunction(() => location.hash.includes('risk=0'), null, { timeout: 5000 }).catch(() => failures.push(`[forecast] risk toggle not in URL: ${page.url()}`));
+        await page.locator('.fc-risk .switch-input').check();
+      }
       await page.getByRole('button', { name: '2014 高雄' }).click();
       await ready('2014-08-20|64000|ok');
       if (!page.url().includes('asof=2014-08-20') || !page.url().includes('county=64000')) failures.push(`[forecast] preset not in URL: ${page.url()}`);

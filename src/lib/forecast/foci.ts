@@ -57,13 +57,13 @@ export interface Focus {
 const M_PER_DEG_LAT = 110_574;
 const mPerDegLng = (lat: number) => 111_320 * Math.cos((lat * Math.PI) / 180);
 
-interface Proj {
+export interface Proj {
   x: (lng: number) => number;
   y: (lat: number) => number;
   lng: (x: number) => number;
   lat: (y: number) => number;
 }
-function projection(lng0: number, lat0: number): Proj {
+export function projection(lng0: number, lat0: number): Proj {
   const kx = mPerDegLng(lat0);
   return { x: (l) => (l - lng0) * kx, y: (l) => (l - lat0) * M_PER_DEG_LAT, lng: (x) => lng0 + x / kx, lat: (y) => lat0 + y / M_PER_DEG_LAT };
 }

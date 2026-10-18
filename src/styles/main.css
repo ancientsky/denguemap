@@ -533,6 +533,9 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 .lg-pending { background: color-mix(in srgb, var(--trend-local) 35%, transparent); border: 1px dashed var(--trend-local); }
 .lg-band50 { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .lg-band90 { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.lg-risk1 { background: color-mix(in srgb, var(--local) 45%, transparent); }
+.lg-risk2 { background: color-mix(in srgb, var(--local) 18%, transparent); }
+.fc-risk { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
 .lg-actual { width: 9px; height: 9px; background: var(--text); transform: rotate(45deg); margin: 0 3px; }
 .fc-chart-rt { height: 170px; }
 .fc-focus-meta { flex-direction: column; gap: 2px; }

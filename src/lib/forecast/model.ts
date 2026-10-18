@@ -78,6 +78,8 @@ export interface AreaForecast {
   next14: Quantiles | null;
   /** Probability of at least one local case in the next 14 days. */
   pAny14: number | null;
+  /** Simulated eventual local cases in the next 14 days, one per path (for the spatial risk surface). */
+  samples14: Float64Array | null;
 }
 
 export interface DailySeries {
@@ -178,7 +180,7 @@ export function forecastArea(series: DailySeries, p: ForecastParams, seed = p.se
   for (let b = 1; b <= H / 7; b++) weeks.push({ end: asOf + 7 * b, observed: 0, kind: 'future', q: null });
 
   const status: AreaForecast['status'] = recent28 >= p.minCases && rt ? 'ok' : 'few';
-  if (status !== 'ok' || !rt) return { asOf, status, recent28, recentImported28, rt, rtSeries, weeks, next14: null, pAny14: null };
+  if (status !== 'ok' || !rt) return { asOf, status, recent28, recentImported28, rt, rtSeries, weeks, next14: null, pAny14: null, samples14: null };
 
   // ---- simulation
   const r = rng(seed);
@@ -233,7 +235,7 @@ export function forecastArea(series: DailySeries, p: ForecastParams, seed = p.se
     if (n14 > 0) any14++;
   }
   for (const i of [...nowIdx, ...futIdx]) weeks[i]!.q = quantiles(blockTotals[i]!);
-  return { asOf, status, recent28, recentImported28, rt, rtSeries, weeks, next14: quantiles(next14), pAny14: any14 / p.sims };
+  return { asOf, status, recent28, recentImported28, rt, rtSeries, weeks, next14: quantiles(next14), pAny14: any14 / p.sims, samples14: next14 };
 }
 
 export function quantiles(samples: Float64Array): Quantiles {

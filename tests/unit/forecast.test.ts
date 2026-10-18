@@ -7,6 +7,7 @@ import { completeness, forecastArea, generationInterval, type ForecastParams } f
 import { BASE_PARAMS } from '../../src/lib/forecast/params';
 import { negbin, rng } from '../../src/lib/forecast/random';
 import { seriesOf, snapshotAt, truthBlocks } from '../../src/lib/forecast/snapshot';
+import { DEFAULT_SURFACE, riskSurface } from '../../src/lib/forecast/surface';
 import type { CasesYear } from '../../src/lib/types';
 
 const P: ForecastParams = { ...BASE_PARAMS, sims: 400 };
@@ -179,5 +180,38 @@ describe('forecast: snapshots', () => {
     expect(Array.from(s.local).reduce((a, b) => a + b, 0)).toBe(70);
     expect(Array.from(s.imported).reduce((a, b) => a + b, 0)).toBe(5);
     expect(truthBlocks(set, '64000', [asOf - 7, asOf])).toEqual([20, 0]);
+  });
+});
+
+describe('forecast: risk surface', () => {
+  const S = { ...DEFAULT_SURFACE, sigma1M: 300, sigma2M: 1500, rho: 0.3, beta: 0.2 };
+  it('spreads one infector into nested 50 % / 90 % regions that hold the point', () => {
+    const surf = riskSurface([{ lng: 120.2, lat: 23.0, w: 1 }], [], S)!;
+    const total = surf.allCells().reduce((s, c) => s + c.share, 0);
+    expect(total).toBeGreaterThan(0.97);
+    expect(total).toBeLessThan(1.001);
+    expect(surf.locate(120.2, 23.0)!.cls).toBe(1);
+    expect(surf.area50Km2).toBeGreaterThan(0);
+    expect(surf.area90Km2).toBeGreaterThan(surf.area50Km2);
+    expect(surf.locate(121.5, 25.0)).toBeNull(); // far away: off every grid
+    const far = surf.locate(120.2 + 0.03, 23.0)!; // ~3 km east
+    expect(far.cls).toBe(3);
+  });
+  it('weights infectors: the 50 % region sits on the heavier one', () => {
+    const surf = riskSurface([{ lng: 120.2, lat: 23.0, w: 10 }, { lng: 120.3, lat: 23.0, w: 1 }], [], S)!;
+    expect(surf.locate(120.2, 23.0)!.cls).toBe(1);
+    expect(surf.locate(120.3, 23.0)!.share).toBeLessThan(surf.locate(120.2, 23.0)!.share);
+  });
+  it('puts β of the mass around earlier cases, and all of it when there are no infectors', () => {
+    const only = riskSurface([], [{ lng: 120.5, lat: 23.2, w: 3 }], S)!;
+    expect(only.locate(120.5, 23.2)!.cls).toBe(1);
+    expect(riskSurface([], [], S)).toBeNull();
+  });
+  it('per-cell probability grows with the simulated totals', () => {
+    const low = riskSurface([{ lng: 120.2, lat: 23.0, w: 1 }], [], S, Float64Array.from({ length: 100 }, () => 2))!;
+    const high = riskSurface([{ lng: 120.2, lat: 23.0, w: 1 }], [], S, Float64Array.from({ length: 100 }, () => 50))!;
+    expect(high.cells[0]!.pAny!).toBeGreaterThan(low.cells[0]!.pAny!);
+    expect(high.cells[0]!.pAny!).toBeLessThanOrEqual(1);
+    expect(high.cells[0]!.expected).toBeCloseTo(50 * high.cells[0]!.share, 6);
   });
 });

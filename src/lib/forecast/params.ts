@@ -1,6 +1,8 @@
 // Model parameters. The literature-based assumptions are fixed here; the "tuned" values come from
 // the backtest (tests/backtest/backtest.run.mjs: chosen on 2002, 2014 and 2015, checked on 2023) and live in tuned.json.
 import type { ForecastParams } from './model';
+import { DEFAULT_SURFACE, type SurfaceParams } from './surface';
+import surfaceTuned from './surface-tuned.json';
 import tuned from './tuned.json';
 
 export const BASE_PARAMS: ForecastParams = {
@@ -24,3 +26,6 @@ export const BASE_PARAMS: ForecastParams = {
 export type TunedParams = Pick<ForecastParams, 'dispersion' | 'damping' | 'rwSd' | 'importedWeight' | 'prior'>;
 
 export const PARAMS: ForecastParams = { ...BASE_PARAMS, ...(tuned as Partial<TunedParams>) };
+
+/** Risk-surface kernel (tests/backtest/spatial.run.mjs: tuned on 2002, 2014 and 2015, checked on 2023). */
+export const SURFACE: SurfaceParams = { ...DEFAULT_SURFACE, ...(surfaceTuned as Partial<SurfaceParams>) };

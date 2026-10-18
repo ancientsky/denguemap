@@ -16,7 +16,9 @@ import { epochDay, isISODate, isoFromEpochDay, todayTaipei } from '../lib/dates'
 import { clear, debounce, extLink, h, nextId, prefersReducedMotion } from '../lib/dom';
 import { compass8, DEFAULT_FOCI, findFoci, type Focus } from '../lib/forecast/foci';
 import { completeness, forecastArea, type AreaForecast } from '../lib/forecast/model';
-import { PARAMS } from '../lib/forecast/params';
+import { PARAMS, SURFACE } from '../lib/forecast/params';
+import { riskSurface, surfacePoints, type RiskSurface } from '../lib/forecast/surface';
+import spatialBacktest from '../lib/forecast/backtest-spatial.json';
 import { countyCounts, localRows, seriesOf, snapshotAt, truthBlocks, type Snapshot } from '../lib/forecast/snapshot';
 import backtest from '../lib/forecast/backtest.json';
 import { TAIWAN_BOUNDS, type BBox } from '../lib/geo';
@@ -27,7 +29,7 @@ import { removeAll } from '../map/layers';
 import { cssVar, themeChanged } from '../theme';
 import { ft } from './forecastText';
 import type { View, ViewContext } from './types';
-import { dataTable, kpis, legendItem, loadingBlock, panel, section, select, type KpiSpec } from './ui';
+import { dataTable, kpis, legendItem, loadingBlock, panel, section, select, toggle, type KpiSpec } from './ui';
 
 use([BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
 
@@ -47,14 +49,16 @@ interface Backtest {
   bySize: { lo: number; hi: number | null; perH: { h: number; cov90: number | null }[] }[];
 }
 const BT = backtest as unknown as Backtest;
+const BTS = spatialBacktest as unknown as { overall: { holdout: { cap50: number | null; cap90: number | null; baseCap90: number | null } } };
 
 const L = {
-  cases: 'dm-fc-cases', last: 'dm-fc-last', lastLine: 'dm-fc-last-line', prev: 'dm-fc-prev',
+  risk: 'dm-fc-risk', cases: 'dm-fc-cases', last: 'dm-fc-last', lastLine: 'dm-fc-last-line', prev: 'dm-fc-prev',
   track: 'dm-fc-track', trackPt: 'dm-fc-track-pt', arrowHalo: 'dm-fc-arrow-halo', arrow: 'dm-fc-arrow',
 };
-const S = { cases: 'dm-fc-cases', ell: 'dm-fc-ell', track: 'dm-fc-track', trackPt: 'dm-fc-track-pt', arrow: 'dm-fc-arrow' };
+const S = { risk: 'dm-fc-risk', cases: 'dm-fc-cases', ell: 'dm-fc-ell', track: 'dm-fc-track', trackPt: 'dm-fc-track-pt', arrow: 'dm-fc-arrow' };
 
 interface MapData {
+  risk: GeoJSON.FeatureCollection<GeoJSON.Polygon> | null;
   cases: GeoJSON.FeatureCollection<GeoJSON.Point>;
   ellipses: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
   tracks: GeoJSON.FeatureCollection<GeoJSON.LineString>;
@@ -66,6 +70,11 @@ class ForecastOverlay implements Overlay {
   private unbind: (() => void)[] = [];
   constructor(private host: MapHost, private data: MapData, private onPick: (e: MapLayerMouseEvent, hover: boolean) => void) {}
   install({ map, palette: p, beforeId }: OverlayCtx): void {
+    if (this.data.risk) {
+      map.addSource(S.risk, { type: 'geojson', data: this.data.risk });
+      map.addLayer({ id: L.risk, type: 'fill', source: S.risk, paint: {
+        'fill-color': p.local, 'fill-opacity': ['match', ['get', 'cls'], 1, 0.34, 0.13], 'fill-antialias': false } }, beforeId);
+    }
     map.addSource(S.ell, { type: 'geojson', data: this.data.ellipses });
     map.addLayer({ id: L.prev, type: 'line', source: S.ell, filter: ['==', ['get', 'kind'], 'prev'],
       paint: { 'line-color': p.accent, 'line-width': 1.6, 'line-dasharray': [2, 2], 'line-opacity': 0.8 } }, beforeId);
@@ -89,12 +98,15 @@ class ForecastOverlay implements Overlay {
       paint: { 'line-color': p.halo, 'line-width': 6, 'line-opacity': 0.9 } }, beforeId);
     map.addLayer({ id: L.arrow, type: 'line', source: S.arrow, layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': p.local, 'line-width': 3 } }, beforeId);
-    if (!this.unbind.length) this.unbind.push(this.host.interactive(L.last, this.onPick));
+    if (!this.unbind.length) {
+      if (this.data.risk) this.unbind.push(this.host.interactive(L.risk, this.onPick));
+      this.unbind.push(this.host.interactive(L.last, this.onPick));
+    }
   }
   uninstall(map: MLMap): void {
     for (const u of this.unbind) u();
     this.unbind = [];
-    removeAll(map, [L.arrow, L.arrowHalo, L.trackPt, L.track, L.cases, L.lastLine, L.last, L.prev], [S.arrow, S.trackPt, S.track, S.cases, S.ell]);
+    removeAll(map, [L.arrow, L.arrowHalo, L.trackPt, L.track, L.cases, L.lastLine, L.last, L.prev, L.risk], [S.arrow, S.trackPt, S.track, S.cases, S.ell, S.risk]);
   }
 }
 
@@ -113,7 +125,7 @@ function arrow(a: [number, number], b: [number, number], i: number): GeoJSON.Fea
   return { type: 'Feature', id: i, properties: { i }, geometry: { type: 'MultiLineString', coordinates: [[a, b], [wing(1), b, wing(-1)]] } };
 }
 
-function mapData(set: CaseSet, snap: Snapshot, county: string | null, foci: Focus[]): MapData {
+function mapData(set: CaseSet, snap: Snapshot, county: string | null, foci: Focus[], surf: RiskSurface | null): MapData {
   const byPt = new Map<number, { n: number; last: number }>();
   for (let i = 0; i < snap.length; i++) {
     if (snap.imp[i] || snap.day[i]! <= snap.asOf - 28) continue;
@@ -139,7 +151,10 @@ function mapData(set: CaseSet, snap: Snapshot, county: string | null, foci: Focu
     f.track.forEach((p, k) => trackPts.features.push({ type: 'Feature', properties: { i, age: (k + 1) / f.track.length }, geometry: { type: 'Point', coordinates: [p.lng, p.lat] } }));
     if (f.direction && f.last14) arrows.features.push(arrow(f.last14.center, f.direction.to, i));
   });
-  return { cases, ellipses, tracks, trackPts, arrows };
+  const risk: MapData['risk'] = surf ? { type: 'FeatureCollection', features: surf.cells.map((c, i) => ({
+    type: 'Feature', id: i, properties: { kind: 'risk', r: i, cls: c.cls }, geometry: { type: 'Polygon', coordinates: [c.ring] },
+  })) } : null;
+  return { risk, cases, ellipses, tracks, trackPts, arrows };
 }
 
 const fmt1 = (v: number) => v.toFixed(1);
@@ -183,10 +198,10 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   const parse = (p: Record<string, string>) => {
     const a = p.asof && isISODate(p.asof) ? epochDay(p.asof) : NaN;
     const replay = Number.isFinite(a) && a >= minDay && a < liveDay;
-    return { asOf: replay ? a : liveDay, replay, county: p.county && COUNTY_RE.test(p.county) ? p.county : null };
+    return { asOf: replay ? a : liveDay, replay, county: p.county && COUNTY_RE.test(p.county) ? p.county : null, risk: p.risk !== '0' };
   };
   let st = parse(ctx.params);
-  const persist = () => setParams({ ...(st.replay ? { asof: isoFromEpochDay(st.asOf) } : {}), ...(st.county ? { county: st.county } : {}) });
+  const persist = () => setParams({ ...(st.replay ? { asof: isoFromEpochDay(st.asOf) } : {}), ...(st.county ? { county: st.county } : {}), ...(st.risk ? {} : { risk: '0' }) });
 
   const yearOf = (d: number) => +isoFromEpochDay(d).slice(0, 4);
   async function loadSet(asOf: number, replay: boolean): Promise<CaseSet> {
@@ -216,9 +231,12 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   const rtEl = h('div', { class: 'chart fc-chart-rt', role: 'img', 'aria-label': ft('rtTitle', { n: 84 }) });
   const rtTable = h('div');
   const fociList = h('ul', { class: 'list-cards' });
+  const riskBody = h('div', { class: 'fc-risk' });
   const legend = h('ul', { class: 'legend' },
     h('li', { class: 'legend-title' }, ft('lgCases')),
     ...[0, 1, 2, 3].map((r) => h('li', { class: 'legend-item' }, h('span', { class: 'lg-dot', style: { '--sw': `var(--rec-${r})` }, 'aria-hidden': 'true' }), t(`rec.${r}` as 'rec.0'))),
+    h('li', { class: 'legend-item' }, h('span', { class: 'lg-square lg-risk1', 'aria-hidden': 'true' }), h('span', null, ft('lgRisk50'))),
+    h('li', { class: 'legend-item' }, h('span', { class: 'lg-square lg-risk2', 'aria-hidden': 'true' }), h('span', null, ft('lgRisk90'))),
     legendItem('var(--accent)', ft('lgLast14'), 'square'),
     h('li', { class: 'legend-item' }, h('span', { class: 'lg-dash', 'aria-hidden': 'true' }), h('span', null, ft('lgPrev14'))),
     h('li', { class: 'legend-item' }, h('span', { class: 'lg-track', 'aria-hidden': 'true' }), h('span', null, ft('lgTrack'))),
@@ -231,13 +249,15 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
       h('li', null, ft('m3', { sims: fmtNum(PARAMS.sims), phi: PARAMS.damping, k: PARAMS.dispersion })),
       h('li', null, ft('m4'), h('ul', null, ...holdout.filter((x) => x.h >= 1).map((x) =>
         h('li', null, `${ft('backtestH', { h: x.h })}：${ft('backtestRow', { w: x.relWis == null ? '—' : x.relWis.toFixed(2), c: x.cov90 == null ? '—' : fmtPct(x.cov90) })}`)))),
-      h('li', null, ft('m5'))),
+      h('li', null, ft('m5')),
+      h('li', null, ft('m6', { m: SURFACE.cellM, s1: SURFACE.sigma1M, s2: fmtNum(SURFACE.sigma2M), rho: fmtPct(SURFACE.rho), beta: fmtPct(SURFACE.beta) }))),
     h('p', null, extLink(REPORT_URL, ft('mReport'))));
   pnl.body.replaceChildren(
     h('div', { class: 'notice-warn fc-banner', role: 'note' }, icon('alert'), h('div', null, h('p', null, h('strong', null, ft('bannerTitle'))), h('p', null, ft('bannerBody')))),
     controls, status, kpiSlot,
     h('section', { class: 'psec', 'aria-labelledby': chartTitleId }, h('h2', { class: 'psec-title', id: chartTitleId }, ft('chartTitle')), fanLegend, chartEl, chartNote, chartTable),
     section(ft('rtTitle', { n: 84 }), rtEl, h('p', { class: 'card-note' }, ft('rtNote')), rtTable),
+    section(ft('riskTitle'), riskBody),
     section(ft('fociTitle'), h('p', { class: 'hint' }, ft('fociNote', { m: DEFAULT_FOCI.linkM, n: DEFAULT_FOCI.minCases })), fociList),
     section(ft('legendTitle'), legend),
     method);
@@ -264,7 +284,7 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   // ---- data + render
   let set: CaseSet | null = null;
   let setKey = '';
-  let last: { f: AreaForecast; truth: number[] | null; snap: Snapshot; foci: Focus[] } | null = null;
+  let last: { f: AreaForecast; truth: number[] | null; snap: Snapshot; foci: Focus[]; surf: RiskSurface | null } | null = null;
   let token = 0;
 
   const countyName = (code: string | null) => (code ? placeName(admin?.countyByCode.get(code)) || code : ft('national'));
@@ -467,7 +487,13 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
     const f = forecastArea(series, PARAMS, PARAMS.seed ^ st.asOf ^ (st.county ? Number(st.county) : 0));
     const truth = st.replay ? truthBlocks(set, st.county, f.weeks.filter((w) => w.kind !== 'past').map((w) => w.end)) : null;
     const foci = findFoci(localRows(set, snap, st.county, st.asOf - 27), st.asOf);
-    last = { f, truth, snap, foci };
+    let surf: RiskSurface | null = null;
+    if (f.status === 'ok' && f.samples14) {
+      const pts = surfacePoints(set, snap, st.county, PARAMS);
+      surf = riskSurface(pts.infectors, pts.older, SURFACE, f.samples14);
+    }
+    last = { f, truth, snap, foci, surf };
+    renderRisk(surf);
     renderControls(snap);
     renderStatus(f);
     renderKpis(f);
@@ -481,24 +507,51 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
     document.body.dataset.forecastReady = `${isoFromEpochDay(st.asOf)}|${st.county ?? ''}|${f.status}`;
   }
 
-  function renderMap(): void {
+  function renderMap(refit = true): void {
     if (!host || !last || !set) return;
-    const { snap, foci } = last;
-    const data = mapData(set, snap, st.county, foci);
+    const { snap, foci, surf } = last;
+    const data = mapData(set, snap, st.county, foci, st.risk ? surf : null);
     const onPick = (e: MapLayerMouseEvent, hover: boolean) => {
-      const i = Number(e.features?.[0]?.properties?.i);
+      const props = e.features?.[0]?.properties;
+      if (props?.kind === 'risk') {
+        const c = surf?.cells[Number(props.r)];
+        if (!c) return;
+        host.showPopup(e.lngLat, h('div', { class: 'pop' }, h('p', { class: 'pop-kicker' }, ft('popupRisk')),
+          h('p', { class: 'pop-title' }, ft(c.cls === 1 ? 'popupRiskCls1' : 'popupRiskCls2')),
+          c.pAny != null ? h('p', { class: 'pop-sub' }, ft('popupRiskP', { m: surf!.cellM, p: fmtPct(c.pAny) })) : null,
+          c.expected != null ? h('p', { class: 'pop-sub' }, ft('popupRiskE', { e: c.expected < 0.1 ? '<0.1' : c.expected.toFixed(1) })) : null), hover);
+        return;
+      }
+      const i = Number(props?.i);
       const f = foci[i];
       if (!f) return;
       host.showPopup(e.lngLat, h('div', { class: 'pop' }, h('p', { class: 'pop-kicker' }, ft('popupFocus')), h('p', { class: 'pop-title' }, focusName(f)),
         ...focusLines(f).map((s) => h('p', { class: 'pop-sub' }, s))), hover);
     };
     host.setOverlay(new ForecastOverlay(host, data, onPick));
+    if (!refit) return;
     const boxes = foci.map((f) => f.bbox);
     const countyBox = st.county ? admin?.countyByCode.get(st.county)?.bbox ?? null : null;
     const target: BBox = boxes.length
       ? [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))]
       : countyBox ?? TAIWAN_BOUNDS;
     host.fit(target, boxes.length ? 13 : 9);
+  }
+
+  function renderRisk(surf: RiskSurface | null): void {
+    if (!surf) {
+      riskBody.replaceChildren(h('p', { class: 'hint' }, ft('riskNone')));
+      return;
+    }
+    const ho = BTS.overall.holdout;
+    riskBody.replaceChildren(
+      h('p', null, ft('riskSummary', { a50: fmt1(surf.area50Km2), a90: fmt1(surf.area90Km2) })),
+      h('p', { class: 'hint' }, ft('riskBacktest', { c50: ho.cap50 == null ? '—' : fmtPct(ho.cap50), c90: ho.cap90 == null ? '—' : fmtPct(ho.cap90), b90: ho.baseCap90 == null ? '—' : fmtPct(ho.baseCap90) })),
+      toggle(ft('riskToggle'), st.risk, (on) => {
+        st = { ...st, risk: on };
+        persist();
+        renderMap(false);
+      }));
   }
 
   offTheme = themeChanged.on(() => {
@@ -517,7 +570,14 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   return {
     update(params) {
       const next = parse(params);
-      if (next.asOf === st.asOf && next.replay === st.replay && next.county === st.county) return;
+      if (next.asOf === st.asOf && next.replay === st.replay && next.county === st.county) {
+        if (next.risk !== st.risk) {
+          st = next;
+          if (last) renderRisk(last.surf);
+          renderMap(false);
+        }
+        return;
+      }
       st = next;
       void run();
     },
