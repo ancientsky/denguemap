@@ -1,0 +1,10 @@
+{
+  "dispersion": 0.2,
+  "damping": 0.5,
+  "rwSd": 0,
+  "importedWeight": 0.5,
+  "prior": {
+    "shape": 2,
+    "scale": 0.5
+  }
+}

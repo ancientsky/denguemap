@@ -1,13 +1,13 @@
 /// <reference types="vitest/config" />
 import { defineConfig, type Plugin } from 'vite';
 import type { OutputBundle, OutputChunk } from 'rolldown';
-import BASEMAP_STYLES from './src/map/basemap-styles.json';
+import BASEMAP_STYLES from './src/map/basemap-styles.json' with { type: 'json' };
 
 // Routes that render on the shared MapLibre map (src/app.ts MAP_ROUTES), and every route the router knows
 // (src/lib/router.ts ROUTES; not imported: the config loader wants no extension-less source imports).
 // Unknown routes fall back to the map, as in the router.
-const MAP_VIEWS = ['map', 'clusters', 'vector', 'imported'] as const;
-const ROUTES = ['map', 'clusters', 'vector', 'trends', 'imported', 'about'];
+const MAP_VIEWS = ['map', 'clusters', 'vector', 'imported', 'forecast'] as const;
+const ROUTES = ['map', 'clusters', 'vector', 'trends', 'imported', 'about', 'forecast'];
 
 /** Short content hash for the generated file name (FNV-1a; avoids needing Node typings in this config). */
 function fnv1a(s: string): string {

@@ -11,7 +11,7 @@ import type { MapHost } from './map/host';
 import { cycleTheme, getThemePref, nextThemePref, themeChanged, type ThemePref } from './theme';
 import type { View, ViewFactory } from './views/types';
 
-const MAP_ROUTES: ReadonlySet<Route> = new Set(['map', 'clusters', 'vector', 'imported']);
+const MAP_ROUTES: ReadonlySet<Route> = new Set(['map', 'clusters', 'vector', 'imported', 'forecast']);
 const NAV: { route: Route; icon: IconName; key: MessageKey }[] = [
   { route: 'map', icon: 'map', key: 'nav.map' },
   { route: 'clusters', icon: 'clusters', key: 'nav.clusters' },
@@ -29,6 +29,8 @@ const VIEWS: Record<Route, () => Promise<{ default: ViewFactory }>> = {
   trends: () => import('./views/trends'),
   imported: () => import('./views/imported'),
   about: () => import('./views/about'),
+  // Internal and experimental: reachable by URL only.
+  forecast: () => import('./views/forecast'),
 };
 
 export class App {

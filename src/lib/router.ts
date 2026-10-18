@@ -1,6 +1,7 @@
 // Hash router: '#/route?key=value&…'. Pure parsing/serialisation (unit-tested) + a tiny binding.
 
-export const ROUTES = ['map', 'clusters', 'vector', 'trends', 'imported', 'about'] as const;
+// 'forecast' is an internal page: routable, but not in the menu (src/app.ts NAV).
+export const ROUTES = ['map', 'clusters', 'vector', 'trends', 'imported', 'about', 'forecast'] as const;
 export type Route = (typeof ROUTES)[number];
 export type Params = Record<string, string>;
 

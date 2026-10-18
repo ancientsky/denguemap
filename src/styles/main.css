@@ -522,6 +522,27 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 .date-badge-label { font-size: 11px; font-weight: 650; opacity: 0.92; letter-spacing: 0.04em; }
 .date-badge-date { font-size: 21px; font-weight: 800; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .legend-wide { width: 100%; }
+/* #/forecast (internal) */
+.panel-forecast .panel-body { gap: 14px; }
+.fc-controls { display: flex; flex-direction: column; gap: 10px; }
+.fc-status { display: flex; flex-direction: column; gap: 8px; }
+.fc-status:empty { display: none; }
+.fc-banner strong { font-weight: 750; }
+.fc-chart { height: 270px; }
+.fc-legend { font-size: 12.5px; gap: 4px 12px; }
+.lg-pending { background: color-mix(in srgb, var(--trend-local) 35%, transparent); border: 1px dashed var(--trend-local); }
+.lg-band50 { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.lg-band90 { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.lg-actual { width: 9px; height: 9px; background: var(--text); transform: rotate(45deg); margin: 0 3px; }
+.fc-chart-rt { height: 170px; }
+.fc-focus-meta { flex-direction: column; gap: 2px; }
+.fc-method summary { cursor: pointer; font-weight: 650; font-size: 13.5px; }
+.fc-method-list { margin: 8px 0 6px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); }
+.fc-method-list ul { margin: 4px 0 0; padding-left: 16px; }
+.lg-dash { width: 18px; height: 0; border-top: 2px dashed var(--accent); }
+.lg-track { width: 18px; height: 2px; background: var(--text); position: relative; opacity: 0.8; }
+.lg-track::after { content: ""; position: absolute; right: -2px; top: -4px; width: 6px; height: 6px; border-radius: 50%; background: var(--map-halo); border: 2px solid var(--text); }
+.lg-arrow { width: 18px; color: var(--local); font-weight: 800; line-height: 1; text-align: center; }
 .lg-ring-case { width: 13px; height: 13px; border-radius: 50%; border: 3px solid var(--muted); background: transparent; }
 .lg-ns1 { width: 14px; height: 14px; border-radius: 4px; background: var(--ns1-fill); position: relative; box-shadow: 0 0 0 1.5px var(--ns1-outline), 0 1px 3px var(--ns1-shadow); }
 .lg-ns1::before, .lg-ns1::after { content: ""; position: absolute; background: #fff; border-radius: 1px; }

@@ -5,7 +5,7 @@
 //
 //   npm run build && npm run smoke
 //   SMOKE_ROUTES=map,trends SMOKE_LANGS=zh SMOKE_THEMES=dark SMOKE_DEVICES=mobile npm run smoke
-//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed,cls — default: all)
+//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed,cls,forecast — default: all)
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,7 +20,7 @@ const BASE = `http://localhost:${PORT}/denguemap/`;
 const SANDBOX_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const EXE = process.env.CHROME_PATH || (existsSync(SANDBOX_CHROME) ? SANDBOX_CHROME : undefined);
 const list = (env, def) => (process.env[env] ? process.env[env].split(',') : def);
-const ROUTES = list('SMOKE_ROUTES', ['map', 'clusters', 'vector', 'trends', 'imported', 'about']);
+const ROUTES = list('SMOKE_ROUTES', ['map', 'clusters', 'vector', 'trends', 'imported', 'about', 'forecast']);
 const LANGS = list('SMOKE_LANGS', ['zh', 'en']);
 const THEMES = list('SMOKE_THEMES', ['light', 'dark']);
 const DEVICES = {
@@ -28,7 +28,7 @@ const DEVICES = {
   mobile: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
 };
 const DEVICE_NAMES = list('SMOKE_DEVICES', Object.keys(DEVICES));
-const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'anim', 'perf', 'embed', 'cls']);
+const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'anim', 'perf', 'embed', 'cls', 'forecast']);
 const run = (name) => PASSES.includes(name);
 const ALLOWED = /tiles\.openfreemap\.org/;
 // SMOKE_DATA=<dir>: serve /denguemap/data/* from another directory (e.g. .fixtures/data) without touching public/data.
@@ -782,11 +782,15 @@ try {
           await page.goto(`${BASE}#/${route}`, { waitUntil: 'load' });
           // hash-only goto: same document, so data-ready is still set from the previous view; wait for this one
           await viewReady(page, route).catch(() => failures.push(`[${current}] app not ready`));
-          const isMap = ['map', 'clusters', 'vector', 'imported'].includes(route);
+          const isMap = ['map', 'clusters', 'vector', 'imported', 'forecast'].includes(route);
           if (isMap) {
             // the map must render via the local fallback style
             await page.waitForFunction(() => document.querySelector('.map canvas') && document.body.dataset.mapIdle === '1', null, { timeout: 25000 })
               .catch(() => failures.push(`[${current}] map did not become idle`));
+          }
+          if (route === 'forecast') {
+            await page.waitForFunction(() => document.body.dataset.forecastReady && document.querySelectorAll('.chart canvas').length >= 2, null, { timeout: 20000 })
+              .catch(() => failures.push(`[${current}] forecast not rendered`));
           } else if (route === 'trends') {
             await page.waitForFunction(() => document.querySelectorAll('.chart canvas').length >= 3, null, { timeout: 20000 })
               .catch(() => failures.push(`[${current}] charts not rendered`));
@@ -1099,6 +1103,39 @@ try {
     console.log(`perf: 2014–2015 period (all types) first render ${load2} ms; slider drag ≈ ${drag2.toFixed(1)} ms/frame; playback at 4× ≈ ${perDay.toFixed(1)} days/s (Aug–Oct 2015)`);
     if (!(perDay > 3)) failures.push(`[perf] playback over 2015 advanced only ${perDay.toFixed(1)} days/s`);
     await ctx.close();
+  }
+  // Internal forecast page: hidden from the menu; replay of a past outbreak renders a forecast, foci and "actual".
+  if (run('forecast')) {
+    const ctx = await browser.newContext({ ...DEVICES.desktop, colorScheme: 'light', reducedMotion: 'reduce' });
+    await ctx.addInitScript(() => { try { localStorage.setItem('denguemap.lang', 'zh'); } catch {} });
+    await prepare(ctx);
+    const page = await ctx.newPage();
+    page.on('pageerror', (err) => failures.push(`[forecast] pageerror: ${err.message}`));
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' && !ALLOWED.test(msg.text()) && !ALLOWED.test(msg.location()?.url ?? '')) failures.push(`[forecast] console.error: ${msg.text()}`);
+    });
+    const ready = (v) => page.waitForFunction((x) => document.body.dataset.forecastReady === x, v, { timeout: 20000 })
+      .catch(async () => failures.push(`[forecast] expected ${v}, got ${await page.evaluate(() => document.body.dataset.forecastReady)}`));
+    try {
+      await page.goto(`${BASE}#/forecast?asof=2015-08-20&county=67000`);
+      await ready('2015-08-20|67000|ok');
+      if (await page.$('.primary-nav a[data-route="forecast"]')) failures.push('[forecast] page is linked from the menu');
+      const s = await page.evaluate(() => ({ kpis: document.querySelectorAll('.kpi').length, foci: document.querySelectorAll('.list-cards .card-btn').length,
+        actual: !!document.querySelector('.fc-legend .lg-actual'), canvases: document.querySelectorAll('.chart canvas').length }));
+      if (s.kpis !== 4 || s.foci < 3 || !s.actual || s.canvases < 2) failures.push(`[forecast] replay incomplete: ${JSON.stringify(s)}`);
+      await page.getByRole('button', { name: '2014 高雄' }).click();
+      await ready('2014-08-20|64000|ok');
+      if (!page.url().includes('asof=2014-08-20') || !page.url().includes('county=64000')) failures.push(`[forecast] preset not in URL: ${page.url()}`);
+      await page.getByRole('button', { name: '最新資料' }).click();
+      await page.waitForFunction(() => !location.hash.includes('asof=') && !document.body.dataset.forecastReady?.startsWith('2014-'), null, { timeout: 20000 })
+        .catch(() => failures.push(`[forecast] latest kept asof: ${page.url()}`));
+      if (await page.$('.fc-legend .lg-actual')) failures.push('[forecast] "actual" shown for live data');
+      await page.screenshot({ path: join(OUT, 'forecast-latest.png') });
+    } catch (e) {
+      failures.push(`[forecast] ${e.message}`);
+    }
+    await ctx.close();
+    console.log('forecast pass done');
   }
   if (run('embed')) await embedPass();
   if (run('cls')) await clsPass();
