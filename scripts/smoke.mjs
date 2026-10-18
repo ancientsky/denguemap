@@ -212,6 +212,7 @@ async function embedPass() {
         for (const route of EMBED_ROUTES) {
           label = `embed-${route}-${lang}-${theme}-${device}`;
           await page.goto(`${BASE}?embed=1&theme=${theme}&lang=${lang}#/${route}`, { waitUntil: 'load' });
+          await viewReady(page, route).catch(() => failures.push(`[${label}] view did not mount`)); // hash-only goto: same document
           await mapReady(page, label);
           await page.waitForFunction(() => document.querySelector('.embed-data')?.textContent, null, { timeout: 10000 }).catch(() => failures.push(`[${label}] data line empty`));
           await page.waitForTimeout(700);
@@ -672,7 +673,7 @@ async function periodPass() {
       await rp.screenshot({ path: join(OUT, 'period-rollover-2027-ytd.png') });
       for (const route of ['vector', 'trends', 'imported', 'clusters', 'about']) {
         await rp.goto(`${BASE}#/${route}`, { waitUntil: 'load' });
-        await rp.waitForFunction(() => document.body.dataset.ready === '1' && document.body.dataset.route, null, { timeout: 20000 });
+        await viewReady(rp, route); // hash-only goto: same document, so data-ready is still set from the previous view
         await rp.waitForTimeout(1200);
         const n = await rp.$$eval('.error-card', (els) => els.length);
         if (n) failures.push(`[${label}] ${route} shows an error state in 2027`);
@@ -721,7 +722,8 @@ try {
         for (const route of ROUTES) {
           current = `${route}-${lang}-${theme}-${device}`;
           await page.goto(`${BASE}#/${route}`, { waitUntil: 'load' });
-          await page.waitForFunction(() => document.body.dataset.ready === '1' && document.body.dataset.route, null, { timeout: 20000 }).catch(() => failures.push(`[${current}] app not ready`));
+          // hash-only goto: same document, so data-ready is still set from the previous view; wait for this one
+          await viewReady(page, route).catch(() => failures.push(`[${current}] app not ready`));
           const isMap = ['map', 'clusters', 'vector', 'imported'].includes(route);
           if (isMap) {
             // the map must render via the local fallback style
@@ -896,6 +898,7 @@ try {
     const zoomAfter = async (route) => {
       await page.evaluate(() => { delete document.body.dataset.mapZoom; });
       await page.click(`a[href="#/${route}"]`);
+      await viewReady(page, route); // the view fits the map while mounting; idles before that report the old zoom
       await page.waitForTimeout(1500);
       await page.waitForFunction(() => document.body.dataset.mapZoom, null, { timeout: 20000 });
       return Number(await page.evaluate(() => document.body.dataset.mapZoom));
