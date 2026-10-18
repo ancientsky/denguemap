@@ -912,6 +912,51 @@ try {
     }
     await ctx.close();
     console.log('mobile zoom regression pass done');
+    // Regression: a view writing its state in the same tick as a navigation (before hashchange is handled)
+    // must not undo the navigation. The vector toggle persists its state synchronously, so clicking it right
+    // after changing the hash reproduces the race deterministically; before the fix it bounced back to vector.
+    {
+      const label = 'nav-race';
+      const rctx = await browser.newContext({ ...DEVICES.desktop, reducedMotion: 'reduce' });
+      await prepare(rctx);
+      const rp = await rctx.newPage();
+      try {
+        await rp.goto(`${BASE}#/vector`, { waitUntil: 'load' });
+        await mapReady(rp, label);
+        const clicked = await rp.evaluate(() => {
+          const input = document.querySelector('.switch-input');
+          location.hash = '#/map';
+          input?.click(); // same tick: the vector view persists its state before hashchange runs
+          return !!input;
+        });
+        if (!clicked) failures.push(`[${label}] vector view has no toggle to click`);
+        await rp.waitForFunction(() => document.body.dataset.route === 'map' && location.hash.startsWith('#/map'), null, { timeout: 10000 })
+          .catch(async () => failures.push(`[${label}] navigation undone by a late view write: ${JSON.stringify(await rp.evaluate(() => [document.body.dataset.route, location.hash]))}`));
+        // A view superseded while still loading its data must not write its state into the next route when the
+        // load finishes: hold the vector data, leave for #/about, release it. Before the fix: #/about?county=64000.
+        let release;
+        const held = new Promise((r) => (release = r));
+        await rctx.route(/\/data\/(vector\.json|geo\/vector-villages)/, async (r) => { await held; await r.fallback(); });
+        const rp2 = await rctx.newPage();
+        await rp2.goto(`${BASE}#/map`, { waitUntil: 'load' });
+        await viewReady(rp2, 'map');
+        const requested = rp2.waitForRequest(/\/data\/vector\.json/);
+        await rp2.evaluate(() => { location.hash = '#/vector?county=64000'; });
+        await requested; // the vector view is now awaiting its data
+        await rp2.evaluate(() => { location.hash = '#/about'; });
+        await viewReady(rp2, 'about');
+        const loaded = rp2.waitForResponse(/\/data\/vector\.json/);
+        release();
+        await loaded;
+        // nothing to wait for when the fix works, so give the superseded view time to finish and (wrongly) write
+        const leaked = await rp2.waitForFunction(() => location.hash !== '#/about', null, { timeout: 3000 }).then(() => true, () => false);
+        if (leaked) failures.push(`[${label}] superseded view wrote into the next route: ${await rp2.evaluate(() => location.hash)}`);
+      } catch (e) {
+        failures.push(`[${label}] ${e.message}`);
+      }
+      await rctx.close();
+      console.log('navigation race pass done');
+    }
   }
   // Imported globe animation: capture mid-animation frames (motion allowed) in both themes.
   if (run('anim')) for (const theme of THEMES) {
