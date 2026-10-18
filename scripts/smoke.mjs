@@ -7,7 +7,7 @@
 //   SMOKE_ROUTES=map,trends SMOKE_LANGS=zh SMOKE_THEMES=dark SMOKE_DEVICES=mobile npm run smoke
 //   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed — default: all)
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -16,7 +16,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'test-results', 'screens');
 const PORT = 4173;
 const BASE = `http://localhost:${PORT}/denguemap/`;
-const EXE = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// CHROME_PATH, else the cloud sandbox's Chromium, else Playwright's own build (CI: `npx playwright-core install chromium`).
+const SANDBOX_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const EXE = process.env.CHROME_PATH || (existsSync(SANDBOX_CHROME) ? SANDBOX_CHROME : undefined);
 const list = (env, def) => (process.env[env] ? process.env[env].split(',') : def);
 const ROUTES = list('SMOKE_ROUTES', ['map', 'clusters', 'vector', 'trends', 'imported', 'about']);
 const LANGS = list('SMOKE_LANGS', ['zh', 'en']);
@@ -68,7 +70,8 @@ function startPreview() {
 
 const preview = await startPreview();
 const browser = await chromium.launch({
-  executablePath: EXE,
+  // channel 'chromium' = the full browser in new headless mode, like the sandbox binary (not the headless shell)
+  ...(EXE ? { executablePath: EXE } : { channel: 'chromium' }),
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-dev-shm-usage'],
 });
 
