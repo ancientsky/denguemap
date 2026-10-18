@@ -45,14 +45,6 @@ export function buildHash(route: Route, params: Params = {}): string {
   return `#/${route}${qs ? `?${qs}` : ''}`;
 }
 
-/**
- * True when the location hash already points at a different view than `current` — a navigation the router
- * has not handled yet (hashchange fires asynchronously). Writing view state in that window would clobber it.
- */
-export function navigationPending(current: Route, hash: string): boolean {
-  return isRouterHash(hash) && parseHash(hash).route !== current;
-}
-
 /** True when the hash is one the router owns (so in-page anchors like '#main' are ignored). */
 export function isRouterHash(hash: string): boolean {
   return hash === '' || hash === '#' || hash.startsWith('#/');

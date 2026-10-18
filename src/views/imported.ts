@@ -141,7 +141,7 @@ class ImportedOverlay implements Overlay {
 }
 
 export default async function importedView(ctx: ViewContext): Promise<View> {
-  const { app, root } = ctx;
+  const { app, root, setParams } = ctx;
   const pnl = panel(t('imported.title'), t('imported.intro'), 'panel-imported');
   root.append(pnl.el);
   pnl.body.append(loadingBlock());
@@ -442,7 +442,7 @@ export default async function importedView(ctx: ViewContext): Promise<View> {
   }
 
   function persist(): void {
-    app.setParams(serializeImportedParams(st, years));
+    setParams(serializeImportedParams(st, years));
   }
 
   // ---------------- world topology (lazy, after first paint)

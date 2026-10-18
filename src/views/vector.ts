@@ -64,7 +64,7 @@ class VectorOverlay implements Overlay {
 }
 
 export default async function vectorView(ctx: ViewContext): Promise<View> {
-  const { app, root } = ctx;
+  const { app, root, setParams } = ctx;
   const pnl = panel(t('vector.title'), t('vector.intro'), 'panel-vector');
   root.append(pnl.el);
   pnl.body.append(loadingBlock());
@@ -160,7 +160,7 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
   );
 
   function persist(): void {
-    app.setParams({ ...serializeVectorParams(st), ...(showCases ? { cases: '1' } : {}) });
+    setParams({ ...serializeVectorParams(st), ...(showCases ? { cases: '1' } : {}) });
   }
 
   function update(): void {

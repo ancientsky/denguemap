@@ -6,6 +6,8 @@ export interface ViewContext {
   /** Container the view renders into (cleared between views). */
   root: HTMLElement;
   params: Params;
+  /** Write this view's state to the URL query (shareable state). A no-op once a newer navigation has started. */
+  setParams(params: Params): void;
 }
 
 export interface View {

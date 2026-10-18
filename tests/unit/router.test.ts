@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { navigationPending, buildHash, isRouterHash, parseHash } from '../../src/lib/router';
+import { buildHash, isRouterHash, parseHash } from '../../src/lib/router';
 
 describe('parseHash', () => {
   it('parses route and params', () => {
@@ -27,17 +27,5 @@ describe('parseHash', () => {
     expect(isRouterHash('#main')).toBe(false);
     expect(isRouterHash('#/map')).toBe(true);
     expect(isRouterHash('')).toBe(true);
-  });
-});
-
-describe('navigationPending', () => {
-  it('is true while the hash already points at another view', () => {
-    expect(navigationPending('vector', '#/map?embed=1&theme=%3Cimg%3E')).toBe(true);
-    expect(navigationPending('vector', '')).toBe(true); // bare URL = default view (map)
-  });
-  it('is false for the current view, unknown routes that fall back to it, and in-page anchors', () => {
-    expect(navigationPending('vector', '#/vector?embed=1')).toBe(false);
-    expect(navigationPending('map', '#/nope')).toBe(false);
-    expect(navigationPending('vector', '#main')).toBe(false);
   });
 });
