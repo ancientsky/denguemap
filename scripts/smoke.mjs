@@ -7,7 +7,7 @@
 //   SMOKE_ROUTES=map,trends SMOKE_LANGS=zh SMOKE_THEMES=dark SMOKE_DEVICES=mobile npm run smoke
 //   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed — default: all)
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -16,7 +16,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'test-results', 'screens');
 const PORT = 4173;
 const BASE = `http://localhost:${PORT}/denguemap/`;
-const EXE = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// CHROME_PATH, else the cloud sandbox's Chromium, else Playwright's own build (CI: `npx playwright-core install chromium`).
+const SANDBOX_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const EXE = process.env.CHROME_PATH || (existsSync(SANDBOX_CHROME) ? SANDBOX_CHROME : undefined);
 const list = (env, def) => (process.env[env] ? process.env[env].split(',') : def);
 const ROUTES = list('SMOKE_ROUTES', ['map', 'clusters', 'vector', 'trends', 'imported', 'about']);
 const LANGS = list('SMOKE_LANGS', ['zh', 'en']);
@@ -68,7 +70,8 @@ function startPreview() {
 
 const preview = await startPreview();
 const browser = await chromium.launch({
-  executablePath: EXE,
+  // channel 'chromium' = the full browser in new headless mode, like the sandbox binary (not the headless shell)
+  ...(EXE ? { executablePath: EXE } : { channel: 'chromium' }),
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-dev-shm-usage'],
 });
 
@@ -212,6 +215,7 @@ async function embedPass() {
         for (const route of EMBED_ROUTES) {
           label = `embed-${route}-${lang}-${theme}-${device}`;
           await page.goto(`${BASE}?embed=1&theme=${theme}&lang=${lang}#/${route}`, { waitUntil: 'load' });
+          await viewReady(page, route).catch(() => failures.push(`[${label}] view did not mount`)); // hash-only goto: same document
           await mapReady(page, label);
           await page.waitForFunction(() => document.querySelector('.embed-data')?.textContent, null, { timeout: 10000 }).catch(() => failures.push(`[${label}] data line empty`));
           await page.waitForTimeout(700);
@@ -672,7 +676,7 @@ async function periodPass() {
       await rp.screenshot({ path: join(OUT, 'period-rollover-2027-ytd.png') });
       for (const route of ['vector', 'trends', 'imported', 'clusters', 'about']) {
         await rp.goto(`${BASE}#/${route}`, { waitUntil: 'load' });
-        await rp.waitForFunction(() => document.body.dataset.ready === '1' && document.body.dataset.route, null, { timeout: 20000 });
+        await viewReady(rp, route); // hash-only goto: same document, so data-ready is still set from the previous view
         await rp.waitForTimeout(1200);
         const n = await rp.$$eval('.error-card', (els) => els.length);
         if (n) failures.push(`[${label}] ${route} shows an error state in 2027`);
@@ -721,7 +725,8 @@ try {
         for (const route of ROUTES) {
           current = `${route}-${lang}-${theme}-${device}`;
           await page.goto(`${BASE}#/${route}`, { waitUntil: 'load' });
-          await page.waitForFunction(() => document.body.dataset.ready === '1' && document.body.dataset.route, null, { timeout: 20000 }).catch(() => failures.push(`[${current}] app not ready`));
+          // hash-only goto: same document, so data-ready is still set from the previous view; wait for this one
+          await viewReady(page, route).catch(() => failures.push(`[${current}] app not ready`));
           const isMap = ['map', 'clusters', 'vector', 'imported'].includes(route);
           if (isMap) {
             // the map must render via the local fallback style
@@ -896,6 +901,7 @@ try {
     const zoomAfter = async (route) => {
       await page.evaluate(() => { delete document.body.dataset.mapZoom; });
       await page.click(`a[href="#/${route}"]`);
+      await viewReady(page, route); // the view fits the map while mounting; idles before that report the old zoom
       await page.waitForTimeout(1500);
       await page.waitForFunction(() => document.body.dataset.mapZoom, null, { timeout: 20000 });
       return Number(await page.evaluate(() => document.body.dataset.mapZoom));
