@@ -19,15 +19,14 @@ import { isEmbed } from '../lib/embed';
 import { TAIWAN_BOUNDS, type BBox } from '../lib/geo';
 import { Emitter } from '../lib/prefs';
 import { getTheme, type Theme } from '../theme';
+import BASEMAP_STYLES from './basemap-styles.json';
 import { BLANK_NAME, FALLBACK_NAME, blankStyle, fallbackStyle } from './fallback';
 import { readPalette, type Palette } from './palette';
 
 setWorkerUrl(workerUrl);
 
-const STYLE_URL: Record<Theme, string> = {
-  light: 'https://tiles.openfreemap.org/styles/positron',
-  dark: 'https://tiles.openfreemap.org/styles/dark',
-};
+// Shared with the build's route preload (vite.config.ts), which starts fetching the style alongside MapLibre.
+const STYLE_URL: Record<Theme, string> = BASEMAP_STYLES;
 const STYLE_TIMEOUT_MS = 8000;
 const OSM_ATTR =
   '<a href="https://openfreemap.org" target="_blank" rel="noopener noreferrer">OpenFreeMap</a> ' +
