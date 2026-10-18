@@ -423,22 +423,25 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 
 /* ---------------------------------------------------------------- KPIs */
 .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* Fixed line heights make the card height deterministic (--kpi-h = padding + border + 18 + 1 + value + 1 + 18),
+   so the loading skeleton reserves exactly the space the real cards take (no layout shift when data arrives). */
 .kpi {
-  display: flex; flex-direction: column; gap: 1px; min-width: 0;
+  --kpi-h: 89px;
+  display: flex; flex-direction: column; gap: 1px; min-width: 0; min-height: var(--kpi-h);
   padding: 10px 12px 9px; border-radius: var(--radius); background: var(--surface);
   border: 1px solid var(--border); position: relative; overflow: hidden;
 }
 .kpi::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--border-strong); }
 .kpi.tone-local::before { background: var(--local); }
 .kpi.tone-imported::before { background: var(--imported); }
-.kpi-label { font-size: 12.5px; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kpi-value { font-size: 25px; font-weight: 750; line-height: 1.2; letter-spacing: -0.01em; }
+.kpi-label { font-size: 12.5px; line-height: 18px; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-value { font-size: 25px; font-weight: 750; line-height: 30px; letter-spacing: -0.01em; }
 .tone-local .kpi-value { color: var(--local); }
 .tone-imported .kpi-value { color: var(--imported); }
-.kpi-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-sub { font-size: 12px; line-height: 18px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi-sub.trend-up::before { content: "▲ " / ""; color: var(--local); font-size: 10px; }
 .kpi-sub.trend-down::before { content: "▼ " / ""; color: var(--ok); font-size: 10px; }
-.kpis-skeleton .kpi { height: 76px; background: linear-gradient(90deg, var(--surface-2), var(--surface), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+.kpis-skeleton .kpi { height: var(--kpi-h); background: linear-gradient(90deg, var(--surface-2), var(--surface), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ---------------------------------------------------------------- legend, lists */
@@ -610,6 +613,13 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 :root[data-theme="dark"] .map .maplibregl-ctrl-attrib-button { filter: invert(1); }
 .map .maplibregl-ctrl-scale { background: var(--panel-bg); color: var(--text-2); border-color: var(--muted); font-size: 11px; }
 .map .maplibregl-ctrl-top-right { top: 6px; right: 6px; }
+/* The bottom-right corner (scale + basemap attribution) is a fixed box spanning the map, its controls stacked at
+   its bottom-right: when the attribution text arrives with the basemap style (or collapses) the box itself never
+   grows or moves, so nothing is reported as a layout shift. The box ignores pointer events; the controls don't. */
+.map .maplibregl-ctrl-bottom-right {
+  top: 0; left: 0; display: flex; flex-direction: column; align-items: flex-end; justify-content: flex-end;
+}
+.map .maplibregl-ctrl-bottom-right > .maplibregl-ctrl { float: none; flex: none; }
 
 /* ---------------------------------------------------------------- toast, errors */
 .toast {
@@ -761,7 +771,9 @@ body[data-layout="map"] .toast { left: calc(50% + var(--panel-w) / 2); }
   .primary-nav a[aria-current="page"] .nav-label { display: inline; }
 }
 @media (max-width: 760px) {
-  :root { --topbar-h: 54px; --tabbar-h: calc(62px + var(--safe-b)); }
+  /* --sheet-peek: height of the collapsed bottom sheet (share of the map stage). Fixed from first paint, not
+     content-driven, so the sheet never grows while a view loads; the map controls sit right above it. */
+  :root { --topbar-h: 54px; --tabbar-h: calc(62px + var(--safe-b)); --sheet-peek: 42%; }
   body { font-size: 15px; }
   .topbar { gap: 8px; padding: 0 8px 0 12px; -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--panel-solid); }
   .brand-mark { width: 30px; height: 30px; }
@@ -797,7 +809,7 @@ body[data-layout="map"] .toast { left: calc(50% + var(--panel-w) / 2); }
 
   .panel {
     top: auto; left: 0; right: 0; bottom: 0; width: auto;
-    max-height: 42%; border-radius: 20px 20px 0 0; border-bottom: 0;
+    min-height: var(--sheet-peek); max-height: var(--sheet-peek); border-radius: 20px 20px 0 0; border-bottom: 0;
     transition: max-height 0.28s var(--ease);
   }
   .panel[data-state="expanded"] { max-height: calc(100% - 52px); }
@@ -814,14 +826,15 @@ body[data-layout="map"] .toast { left: calc(50% + var(--panel-w) / 2); }
   .panel-intro { display: none; }
   .panel[data-state="expanded"] .panel-intro { display: block; }
   .panel-body { padding: 6px 16px 16px; gap: 14px; }
-  .kpi { padding: 8px 10px 7px; }
-  .kpi-value { font-size: 21px; }
+  .kpi { --kpi-h: 81px; padding: 8px 10px 7px; }
+  .kpi-value { font-size: 21px; line-height: 26px; }
   body[data-layout="map"] .view > .view-loading { left: 50%; transform: translateX(-50%); }
   .map-unavailable { padding: 24px 24px 45%; }
   .date-badge { top: 10px; right: auto; left: 12px; align-items: flex-start; padding: 4px 10px 5px; }
   .date-badge-date { font-size: 17px; }
   body[data-layout="map"] .toast, .toast { left: 12px; right: 12px; transform: none; max-width: none; top: 10px; font-size: 13px; padding: 8px 12px; }
-  .map .maplibregl-ctrl-bottom-right { bottom: 0; }
+  /* scale + the (required) basemap attribution stay visible above the collapsed sheet */
+  .map .maplibregl-ctrl-bottom-right { bottom: var(--sheet-peek); }
 
   .view-page { padding: 18px 14px 32px; }
   .page-title { font-size: 23px; }
@@ -862,11 +875,11 @@ html[data-embed] .map-unavailable { padding-left: 24px; }
 
 /* Compact control panel: short iframe (< 560 px tall) or phone width. Collapsed = title row only; tap to open. */
 @media (max-width: 760px), (max-height: 559px) {
-  html[data-embed] .panel[data-state="collapsed"] { max-height: none; }
+  html[data-embed] .panel[data-state="collapsed"] { max-height: none; min-height: 0; }
   html[data-embed] .panel[data-state="collapsed"] .panel-body,
   html[data-embed] .panel[data-state="collapsed"] .panel-intro { display: none; }
   html[data-embed] .panel[data-state="collapsed"] .panel-head { padding-bottom: 12px; }
-  html[data-embed] .panel[data-state="expanded"] { max-height: calc(100% - 36px); }
+  html[data-embed] .panel[data-state="expanded"] { max-height: calc(100% - 36px); min-height: 0; }
 }
 @media (max-width: 760px) {
   /* keep the scale bar and the (required) basemap attribution above the collapsed sheet (≈ 61 px) */

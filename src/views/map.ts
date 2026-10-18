@@ -8,7 +8,7 @@ import { loadAdmin, type Admin } from '../lib/admin';
 import { dailyCountsSet, mergeCaseYears, niceBreaks, SetAggregator, topEntries, type CaseAggregate, type CaseSet } from '../lib/aggregate';
 import { loadData, DataError } from '../lib/data';
 import { addDays, dayDiff, epochDay, isISODate, isoFromEpochDay, recencyRef, todayTaipei } from '../lib/dates';
-import { clear, extLink, h, rafThrottle } from '../lib/dom';
+import { clear, extLink, h, rafThrottle, whenIdle } from '../lib/dom';
 import { directionsUrl } from '../lib/directions';
 import { TAIWAN_BOUNDS } from '../lib/geo';
 import { icon } from '../lib/icons';
@@ -16,7 +16,8 @@ import { normalizeMapParams, serializeMapParams, type CaseType, type MapCtx, typ
 import { dataRange, defaultPreset, MAX_PERIOD_DAYS, PERIOD_PRESETS, resolvePeriod, spanDays, yearsTouched, type PeriodOpts, type PeriodPreset } from '../lib/period';
 import type { NS1, Summary } from '../lib/types';
 import { validateCases, validateNS1, validateSummary } from '../lib/validate';
-import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
+import type { MapHost, Overlay, OverlayCtx } from '../map/host';
+import { removeAll } from '../map/layers';
 import { readPalette } from '../map/palette';
 import { addCountBadge, addNs1Icon, addRiskSquares } from '../map/images';
 import { caseFeatures, casePaint, casePopup, caseSortKey, recencyLegend, type ColorMode } from './caseLayer';
@@ -55,6 +56,9 @@ class CasesOverlay implements Overlay {
   vector: { polys: GeoJSON.FeatureCollection; pts: GeoJSON.FeatureCollection } | null = null;
   private unbind: (() => void)[] = [];
   private ctx: OverlayCtx | null = null;
+  /** Town / county polygons sent to the map for the current style (see sendAdmin). */
+  private adminSent = false;
+  private cancelIdle: (() => void) | null = null;
 
   constructor(private host: MapHost, private admin: Admin | null, private onPick: (e: MapLayerMouseEvent, hover: boolean, layer: string) => void) {}
 
@@ -62,8 +66,12 @@ class CasesOverlay implements Overlay {
     this.ctx = ctx;
     const { map, palette: p } = ctx;
     if (this.admin) {
-      map.addSource(S.towns, { type: 'geojson', data: this.admin.townsFC });
-      map.addSource(S.counties, { type: 'geojson', data: this.admin.countiesFC });
+      // The polygons are only drawn in towns mode / for a chosen county: start empty and send them when the
+      // page is idle (serialising ~370 town polygons to the worker is a long main-thread task), or right away
+      // when one of those is shown.
+      this.adminSent = false;
+      map.addSource(S.towns, { type: 'geojson', data: EMPTY });
+      map.addSource(S.counties, { type: 'geojson', data: EMPTY });
       map.addLayer({ id: L.townsFill, type: 'fill', source: S.towns, paint: { 'fill-color': this.fillExpr(), 'fill-opacity': 0.78 } });
       map.addLayer({ id: L.townsLine, type: 'line', source: S.towns, paint: { 'line-color': p.borderStrong, 'line-opacity': 0.5, 'line-width': ['interpolate', ['linear'], ['zoom'], 7, 0.3, 12, 1] } });
       map.addLayer({ id: L.focus, type: 'line', source: S.counties, filter: ['==', ['get', 'code'], this.county ?? ''], paint: { 'line-color': p.accent, 'line-width': 2.2 } });
@@ -83,8 +91,9 @@ class CasesOverlay implements Overlay {
       },
     });
     map.addLayer({ id: L.pts, type: 'circle', source: S.cases, layout: { 'circle-sort-key': caseSortKey(this.colorMode) }, paint: casePaint(p, this.colorMode) });
-    // NS1 clinics: canvas-drawn icons (no sprite/glyph dependency), clustered at low zoom.
-    addNs1Icon(map, NS1_ICON, p.ns1);
+    // NS1 clinics: canvas-drawn icons (no sprite/glyph dependency), clustered at low zoom. The icon and the
+    // cluster badges are drawn on first use (styleimagemissing): the layer is off by default, and the first
+    // 2D canvas is costly on a cold page.
     map.addSource(S.ns1, { type: 'geojson', data: this.ns1FC(), cluster: true, clusterRadius: 42, clusterMaxZoom: 12 });
     map.addLayer({ id: L.ns1c, type: 'symbol', source: S.ns1, filter: ['has', 'point_count'],
       layout: { 'icon-image': ['concat', NS1_BADGE, ['get', 'point_count_abbreviated']], 'icon-allow-overlap': true, 'icon-ignore-placement': true } }, L.pts);
@@ -93,9 +102,13 @@ class CasesOverlay implements Overlay {
     // (NS1 sits under the case markers: cases are the primary data)
     this.applyMode();
     this.applyTownState();
+    if (this.mode === 'towns' || this.county) this.sendAdmin();
+    else if (this.admin) this.cancelIdle = whenIdle(() => this.sendAdmin());
     if (!this.unbind.length) {
       const missing = (e: { id: string }) => {
-        if (e.id.startsWith(NS1_BADGE) && this.ctx) addCountBadge(this.ctx.map, e.id, e.id.slice(NS1_BADGE.length), this.ctx.palette.ns1);
+        if (!this.ctx) return;
+        if (e.id === NS1_ICON) addNs1Icon(this.ctx.map, NS1_ICON, this.ctx.palette.ns1);
+        else if (e.id.startsWith(NS1_BADGE)) addCountBadge(this.ctx.map, e.id, e.id.slice(NS1_BADGE.length), this.ctx.palette.ns1);
       };
       map.on('styleimagemissing', missing);
       this.unbind.push(() => map.off('styleimagemissing', missing));
@@ -104,10 +117,23 @@ class CasesOverlay implements Overlay {
   }
 
   uninstall(map: MLMap): void {
+    this.cancelIdle?.();
+    this.cancelIdle = null;
     for (const u of this.unbind) u();
     this.unbind = [];
     removeAll(map, [L.ns1, L.ns1c, L.pts, L.heat, L.mvPtsNp, L.mvLine, L.mvFill, L.focus, L.townsLine, L.townsFill], [S.ns1, S.cases, S.mvPts, S.mvPoly, S.counties, S.towns]);
     this.ctx = null;
+  }
+
+  /** Send the town / county polygons to the current style (once per install). */
+  private sendAdmin(): void {
+    this.cancelIdle?.();
+    this.cancelIdle = null;
+    const m = this.map;
+    if (this.adminSent || !m || !this.admin) return;
+    this.adminSent = true;
+    (m.getSource(S.towns) as GeoJSONSource | undefined)?.setData(this.admin.townsFC);
+    (m.getSource(S.counties) as GeoJSONSource | undefined)?.setData(this.admin.countiesFC);
   }
 
   private addVectorLayers(): void {
@@ -196,6 +222,7 @@ class CasesOverlay implements Overlay {
 
   setMode(mode: MapMode): void {
     this.mode = mode;
+    if (mode === 'towns') this.sendAdmin();
     this.applyMode();
     this.applyTownState();
   }
@@ -214,6 +241,7 @@ class CasesOverlay implements Overlay {
 
   setCounty(code: string | null): void {
     this.county = code;
+    if (code) this.sendAdmin();
     if (this.map?.getLayer(L.focus)) this.map.setFilter(L.focus, ['==', ['get', 'code'], code ?? '']);
   }
 
@@ -229,22 +257,40 @@ class CasesOverlay implements Overlay {
 export default async function mapView(ctx: ViewContext): Promise<View> {
   const { app, root, setParams } = ctx;
   const pnl = panel(t('map.title'), undefined, 'panel-map');
+  // The panel shell paints immediately: title + KPI skeleton (exactly the size of the real cards), then the
+  // KPIs as soon as the summary arrives (the entry chunk already requested it) — before MapLibre is ready.
+  const kpiBox = h('div', { class: 'kpi-slot' }, h('div', { class: 'kpis kpis-skeleton', 'aria-hidden': 'true' }, h('div', { class: 'kpi' }), h('div', { class: 'kpi' }), h('div', { class: 'kpi' }), h('div', { class: 'kpi' })));
+  const bodyLoading = loadingBlock();
+  pnl.body.append(kpiBox, bodyLoading);
   root.append(pnl.el);
-  pnl.body.append(loadingBlock());
   let destroyed = false;
   const cleanups: (() => void)[] = [];
 
   const manifest = await app.whenManifest();
-  const [admin, host] = await Promise.all([loadAdmin().catch(() => null), app.getMapHost()]);
-  if (destroyed) return { destroy() {} };
-  clear(pnl.body);
   if (!manifest) {
+    clear(pnl.body);
     pnl.body.append(errorCard('manifest.json', () => location.reload(), 'manifest.json'));
     return { destroy() {} };
   }
+  loadData('summary.json', validateSummary).then((s) => !destroyed && renderKpis(s), (e: unknown) => {
+    if (destroyed) return;
+    clear(kpiBox);
+    kpiBox.append(errorCard('', undefined, e instanceof DataError ? e.file : 'summary.json'));
+  });
+  const today = todayTaipei();
+  // Start the case files of the requested period now (memoised; loadPeriod() below reuses them) instead of
+  // after MapLibre and the boundaries. The period does not depend on the county list.
+  const p0St = normalizeMapParams(ctx.params, { years: manifest.years, latestOnset: manifest.latestOnset, today, counties: new Set() });
+  for (const y of yearsTouched(p0St.period.start, p0St.period.end, manifest.years)) loadData(`cases/${y}.json`, (v) => validateCases(v, y)).catch(() => undefined);
+
+  // Boundaries after MapLibre (see main.ts): both are needed below, MapLibre is the long pole for the first map paint.
+  const hostP = app.getMapHost();
+  const [admin, host] = await Promise.all([hostP.then(() => loadAdmin()).catch(() => null), hostP]);
+  if (destroyed) return { destroy() {} };
+  bodyLoading.remove();
   if (host) host.padding = pnl.padding;
 
-  const mctx: MapCtx = { years: manifest.years, latestOnset: manifest.latestOnset, today: todayTaipei(), counties: new Set(admin?.counties.map((c) => c.code) ?? []) };
+  const mctx: MapCtx = { years: manifest.years, latestOnset: manifest.latestOnset, today, counties: new Set(admin?.counties.map((c) => c.code) ?? []) };
   let st: MapParams = normalizeMapParams(ctx.params, mctx);
   /** merged cases of every year the period touches (built once per period) */
   let set: CaseSet | null = null;
@@ -327,7 +373,6 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   }
 
   // ------------------------------------------------------------- panel UI
-  const kpiBox = h('div', { class: 'kpi-slot' }, h('div', { class: 'kpis kpis-skeleton', 'aria-hidden': 'true' }, h('div', { class: 'kpi' }), h('div', { class: 'kpi' }), h('div', { class: 'kpi' }), h('div', { class: 'kpi' })));
   const resultLine = h('p', { class: 'result-line' });
   const statusLine = h('p', { class: 'inline-status', role: 'status' });
   const warnBox = h('div', { class: 'warn-slot' });
@@ -519,7 +564,6 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   }
 
   pnl.body.append(
-    kpiBox,
     section(null, h('div', { class: 'field-row field-row-half' }, periodSel, countySel), yearRow, customRow, periodHint, emptyNote, typeSeg),
     section(t('map.range'), range.el, h('div', { class: 'play-row' }, playBtn, stopBtn, speedSel), h('p', { class: 'hint' }, t('map.playHint')), statusLine, warnBox),
     section(null, modeSeg, colorSeg, mvToggle, mvNote, ns1Toggle, ns1Note),
@@ -531,11 +575,6 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   renderPlayBtn();
 
   // ------------------------------------------------------------- KPIs
-  loadData('summary.json', validateSummary).then((s) => !destroyed && renderKpis(s), (e: unknown) => {
-    if (destroyed) return;
-    clear(kpiBox);
-    kpiBox.append(errorCard('', undefined, e instanceof DataError ? e.file : 'summary.json'));
-  });
   function renderKpis(s: Summary): void {
     const delta = (cur: number, prev: number): KpiSpec['trend'] => (cur > prev ? 'up' : cur < prev ? 'down' : 'flat');
     const ago = dayDiff(s.latestOnset, s.asOf);

@@ -17,7 +17,8 @@ import { advisoryLevel, dayToISO, filterNews, importedEvents, levelHistogram, le
 import { VB_KEYS, type Imported, type Notices, type Travel, type TravelNews, type VbKey } from '../lib/types';
 import { validateImported, validateNotices, validateTopology, validateTravel } from '../lib/validate';
 import { importedShortfall, isUnavailable, keptYears } from '../lib/warnings';
-import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
+import type { MapHost, Overlay, OverlayCtx } from '../map/host';
+import { removeAll } from '../map/layers';
 import type { Palette } from '../map/palette';
 import { ImportAnimator, SRC } from './importedAnim';
 import type { View, ViewContext } from './types';

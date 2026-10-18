@@ -17,6 +17,9 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Basemap host (style, tiles, sprites, glyphs; fetched in CORS mode without credentials, hence crossorigin):
+         open the connection while the app loads instead of after MapLibre has started. -->
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
     <!-- Applies the saved/system theme before first paint (external file: CSP has no 'unsafe-inline' for scripts). -->
     <script src="/theme-init.js"></script>
     <script type="module" src="/src/main.ts"></script>

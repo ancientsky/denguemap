@@ -1,6 +1,7 @@
 // Data loading: manifest first (no-cache), everything else versioned with ?v=<hash> from the manifest.
+import type { Topology } from 'topojson-specification';
 import type { Manifest } from './types';
-import { validateManifest } from './validate';
+import { validateManifest, validateTopology } from './validate';
 
 const BASE = `${import.meta.env.BASE_URL}data/`;
 
@@ -22,13 +23,19 @@ async function fetchJSON(url: string, init: RequestInit): Promise<unknown> {
   return res.json();
 }
 
-export async function loadManifest(): Promise<Manifest> {
-  try {
-    manifest = validateManifest(await fetchJSON(`${BASE}manifest.json`, { cache: 'no-cache' }));
-    return manifest;
-  } catch (e) {
-    throw new DataError('manifest.json', e);
-  }
+let manifestP: Promise<Manifest> | null = null;
+/**
+ * Fetch + validate the manifest once (memoised, so main.ts can start it before the app shell is built and
+ * the shell reuses the same request). A failed load is forgotten so a later call retries.
+ */
+export function loadManifest(): Promise<Manifest> {
+  manifestP ??= fetchJSON(`${BASE}manifest.json`, { cache: 'no-cache' })
+    .then((raw) => (manifest = validateManifest(raw)))
+    .catch((e: unknown) => {
+      manifestP = null;
+      throw new DataError('manifest.json', e);
+    });
+  return manifestP;
 }
 
 export function getManifest(): Manifest | null {
@@ -57,4 +64,13 @@ export function loadData<T>(path: string, validate: (v: unknown) => T): Promise<
     cache.set(path, p);
   }
   return p;
+}
+
+const ADMIN_TOPO = 'geo/admin.topo.json';
+/**
+ * The raw administrative-boundary topology (memoised like every loadData file). Split from lib/admin.ts
+ * (which decodes it with topojson-client) so main.ts can start the download for map routes before that chunk loads.
+ */
+export function loadAdminTopo(): Promise<Topology> {
+  return loadData(ADMIN_TOPO, (v) => validateTopology(v, ADMIN_TOPO, ['counties', 'towns']));
 }

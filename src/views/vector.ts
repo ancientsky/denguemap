@@ -16,7 +16,8 @@ import { normalizeVectorParams, serializeVectorParams, type VectorParams } from 
 import type { VectorVillage } from '../lib/types';
 import { validateCases } from '../lib/validate';
 import { isUnavailable } from '../lib/warnings';
-import { removeAll, type MapHost, type Overlay, type OverlayCtx } from '../map/host';
+import type { MapHost, Overlay, OverlayCtx } from '../map/host';
+import { removeAll } from '../map/layers';
 import { caseFeatures, casePaint, casePopup, caseSortKey, recencyLegend } from './caseLayer';
 import type { View, ViewContext } from './types';
 import { loadingBlock, panel, section, select, toggle, unavailableState } from './ui';

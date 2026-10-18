@@ -44,16 +44,45 @@ export function panel(title: string, intro?: string, extraClass = ''): Panel {
       setState(dy < 0);
     }
   });
+  // Panel / stage sizes for padding() come from ResizeObservers instead of layout reads: fitBounds is usually
+  // called right after a view has filled the panel, where a getBoundingClientRect() forced a full reflow.
+  let size: { w: number; h: number } | null = null;
+  watchStage();
+  new ResizeObserver(([e]) => {
+    if (e) size = boxSize(e);
+  }).observe(el);
   const padding: PaddingFn = () => {
+    const panelSize = size ?? { w: el.offsetWidth, h: el.offsetHeight }; // not observed yet (rare): measure once
     if (isMobile()) {
-      const r = el.getBoundingClientRect();
-      const stage = el.closest('main')?.getBoundingClientRect();
-      const bottom = stage ? Math.max(24, stage.bottom - r.top + 12) : 200;
-      return { top: 24, right: 24, bottom: Math.min(bottom, (stage?.height ?? 600) * 0.6), left: 24 };
+      // The sheet sits at the bottom of the stage (main): its height is how much of the map it covers.
+      const h = stageHeight(el);
+      const bottom = h ? Math.max(24, panelSize.h + 12) : 200;
+      return { top: 24, right: 24, bottom: Math.min(bottom, (h || 600) * 0.6), left: 24 };
     }
-    return { top: 88, right: 72, bottom: 56, left: el.offsetWidth + 56 };
+    return { top: 88, right: 72, bottom: 56, left: panelSize.w + 56 };
   };
   return { el, body, head, padding };
+}
+
+function boxSize(e: ResizeObserverEntry): { w: number; h: number } {
+  const b = e.borderBoxSize?.[0];
+  return b ? { w: b.inlineSize, h: b.blockSize } : { w: e.contentRect.width, h: e.contentRect.height };
+}
+
+/** Height of the map stage (<main>, which persists across views), tracked by one shared ResizeObserver. */
+let stageH = -1;
+let stageWatched = false;
+function watchStage(): void {
+  const main = stageWatched ? null : document.querySelector('main');
+  if (!main) return;
+  stageWatched = true;
+  new ResizeObserver(([e]) => {
+    if (e) stageH = boxSize(e).h;
+  }).observe(main);
+}
+function stageHeight(from: Element): number {
+  if (stageH >= 0) return stageH;
+  return from.closest('main')?.getBoundingClientRect().height ?? 0; // not observed yet (rare)
 }
 
 export function section(title: string | null, ...children: (Node | null | false)[]): HTMLElement {

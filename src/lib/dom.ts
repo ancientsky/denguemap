@@ -85,3 +85,16 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: numb
 }
 
 export const prefersReducedMotion = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Run `fn` when the main thread is idle (at the latest after `timeout` ms), off the critical path of a first
+ * render. Falls back to a short timer where requestIdleCallback is missing (Safari). Returns a cancel function.
+ */
+export function whenIdle(fn: () => void, timeout = 2000): () => void {
+  if (typeof requestIdleCallback === 'function') {
+    const id = requestIdleCallback(() => fn(), { timeout });
+    return () => cancelIdleCallback(id);
+  }
+  const id = setTimeout(fn, 200);
+  return () => clearTimeout(id);
+}

@@ -28,16 +28,18 @@ for (const ref of new Set(refs)) {
 }
 console.log(`${(total / 1024).toFixed(1).padStart(7)} KB gz  shell total (budget ${SHELL_BUDGET_KB} KB)`);
 
-// Map route = shell + the map view chunk + everything it imports statically (followed recursively,
-// so new shared chunks are counted automatically). Dynamic import() targets are lazy and excluded.
+// Map route = shell + the map view chunk + the map host (MapLibre; the app imports it dynamically on every map
+// route) + everything they import statically (followed recursively, so new shared chunks are counted
+// automatically). Other dynamic import() targets are lazy and excluded.
 const assets = await readdir(join(dist, 'assets'));
 const mapEntry = assets.find((f) => /^map-[\w-]+\.js$/.test(f));
-if (!mapEntry) {
-  console.error('map view chunk (assets/map-*.js) not found');
+const hostEntry = assets.find((f) => /^host-[\w-]+\.js$/.test(f));
+if (!mapEntry || !hostEntry) {
+  console.error('map view chunk (assets/map-*.js) or map host chunk (assets/host-*.js) not found');
   process.exit(1);
 }
 const seen = new Set(refs.map((r) => r.replace(/^assets\//, '')));
-const queue = [mapEntry];
+const queue = [mapEntry, hostEntry];
 let mapTotal = total;
 while (queue.length) {
   const f = queue.shift();

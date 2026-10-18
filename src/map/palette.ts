@@ -1,5 +1,4 @@
 // Map colours come from CSS custom properties so light/dark stay in one place (src/styles/tokens.css).
-import { cssVar } from '../theme';
 
 export interface Palette {
   local: string;
@@ -25,8 +24,24 @@ export interface Palette {
   worldLine: string;
 }
 
+let cached: { theme: string; palette: Palette } | null = null;
+
+/**
+ * The palette for the current theme. Reading custom properties forces a style recalc, and views call this
+ * often (legends, layer installs), so the result is cached per html[data-theme] value.
+ */
 export function readPalette(): Palette {
-  const v = (n: string, d: string) => cssVar(n) || d;
+  const theme = document.documentElement.dataset.theme ?? '';
+  if (cached?.theme === theme) return cached.palette;
+  const css = getComputedStyle(document.documentElement);
+  const palette = computePalette(css);
+  // Only cache once the stylesheet is applied (the custom properties resolve), never the fallbacks.
+  if (css.getPropertyValue('--local').trim()) cached = { theme, palette };
+  return palette;
+}
+
+function computePalette(css: CSSStyleDeclaration): Palette {
+  const v = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
   return {
     local: v('--local', '#d1193e'),
     imported: v('--imported', '#d97706'),

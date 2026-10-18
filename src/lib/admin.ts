@@ -1,9 +1,8 @@
 // Administrative boundaries (geo/admin.topo.json) → lookups + GeoJSON, built once.
 import { feature, mesh } from 'topojson-client';
 import type { GeometryCollection, Topology } from 'topojson-specification';
-import { loadData } from './data';
+import { loadAdminTopo } from './data';
 import { bboxOf, type BBox } from './geo';
-import { validateTopology } from './validate';
 
 export interface Place {
   code: string;
@@ -21,8 +20,9 @@ export interface Admin {
   towns: Map<string, Town>;
   countiesFC: GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon, { code: string }>;
   townsFC: GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon, { code: string; county: string }>;
-  countyLines: GeoJSON.MultiLineString;
-  townLines: GeoJSON.MultiLineString;
+  /** County / town boundary lines (built lazily: only the offline fallback basemap draws them). */
+  readonly countyLines: GeoJSON.MultiLineString;
+  readonly townLines: GeoJSON.MultiLineString;
 }
 
 // Conventional north-to-south ordering used by Taiwan government lists.
@@ -62,15 +62,24 @@ function build(topo: Topology): Admin {
     towns.set(code, { code, county, zh: str(f.properties?.zh), en: str(f.properties?.en), bbox: bboxOf(f.geometry) });
     townsFC.features.push({ type: 'Feature', id: Number(code), properties: { code, county }, geometry: f.geometry });
   }
-  const countyLines = mesh(topo, cObj) as GeoJSON.MultiLineString;
-  const townLines = mesh(topo, tObj, (a, b) => a !== b) as GeoJSON.MultiLineString;
-  return { counties, countyByCode, countyByZh, towns, countiesFC, townsFC, countyLines, townLines };
+  // The boundary meshes are only drawn by the offline fallback basemap: build them on first use.
+  let countyLines: GeoJSON.MultiLineString | undefined;
+  let townLines: GeoJSON.MultiLineString | undefined;
+  return {
+    counties, countyByCode, countyByZh, towns, countiesFC, townsFC,
+    get countyLines() {
+      return (countyLines ??= mesh(topo, cObj) as GeoJSON.MultiLineString);
+    },
+    get townLines() {
+      return (townLines ??= mesh(topo, tObj, (a, b) => a !== b) as GeoJSON.MultiLineString);
+    },
+  };
 }
 
 let adminP: Promise<Admin> | null = null;
 export function loadAdmin(): Promise<Admin> {
   if (!adminP) {
-    adminP = loadData('geo/admin.topo.json', (v) => validateTopology(v, 'geo/admin.topo.json', ['counties', 'towns'])).then(build);
+    adminP = loadAdminTopo().then(build);
     adminP.catch(() => (adminP = null));
   }
   return adminP;

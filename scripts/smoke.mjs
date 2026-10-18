@@ -5,7 +5,7 @@
 //
 //   npm run build && npm run smoke
 //   SMOKE_ROUTES=map,trends SMOKE_LANGS=zh SMOKE_THEMES=dark SMOKE_DEVICES=mobile npm run smoke
-//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed — default: all)
+//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed,cls — default: all)
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -28,7 +28,7 @@ const DEVICES = {
   mobile: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
 };
 const DEVICE_NAMES = list('SMOKE_DEVICES', Object.keys(DEVICES));
-const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'anim', 'perf', 'embed']);
+const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'anim', 'perf', 'embed', 'cls']);
 const run = (name) => PASSES.includes(name);
 const ALLOWED = /tiles\.openfreemap\.org/;
 // SMOKE_DATA=<dir>: serve /denguemap/data/* from another directory (e.g. .fixtures/data) without touching public/data.
@@ -689,6 +689,61 @@ async function periodPass() {
   }
   console.log('period pass done');
 }
+// ---------------------------------------------------------------------------------------------
+// Layout stability (Lighthouse CLS): fresh loads of the map views with the data files held back for a moment,
+// so the panel shell, the KPI skeleton and the map controls paint first and the data arrives afterwards.
+// Sums layout-shift entries (without recent input) after the view has mounted and again once the data and
+// the map have settled. Budget 0.05 (Lighthouse "good" is 0.1).
+// ---------------------------------------------------------------------------------------------
+const CLS_BUDGET = 0.05;
+async function clsPass() {
+  const cases = [
+    ...['map', 'clusters', 'vector', 'imported'].map((route) => ({ route, device: 'mobile' })),
+    { route: 'map', device: 'desktop' },
+  ];
+  for (const { route, device } of cases) {
+    for (const theme of ['light', 'dark']) {
+      const label = `cls-${route}-${device}-${theme}`;
+      const ctx = await browser.newContext({ ...DEVICES[device], colorScheme: theme, locale: 'zh-TW', timezoneId: 'Asia/Taipei' });
+      await ctx.addInitScript(() => {
+        window.__cls = 0;
+        window.__shifts = [];
+        new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) {
+            if (e.hadRecentInput) continue;
+            window.__cls += e.value;
+            window.__shifts.push(`${Math.round(e.startTime)}ms ${e.value.toFixed(4)} ${e.sources.map((x) => x.node?.className?.toString?.().slice(0, 40) ?? x.node?.nodeName ?? '?').join(',')}`);
+          }
+        }).observe({ type: 'layout-shift', buffered: true });
+      });
+      await prepare(ctx);
+      // hold the data files back (after any SMOKE_DATA route, which this one falls back to)
+      await ctx.route(/\/denguemap\/data\/(?!manifest)/, async (r) => {
+        await new Promise((res) => setTimeout(res, 400));
+        await r.fallback();
+      });
+      const page = await ctx.newPage();
+      watch(page, () => label);
+      try {
+        await page.goto(`${BASE}#/${route}`, { waitUntil: 'load' });
+        await viewReady(page, route);
+        const atMount = await page.evaluate(() => window.__cls);
+        await mapReady(page, label);
+        if (route === 'map') await page.waitForFunction(() => document.querySelector('.result-line')?.dataset.n && !document.querySelector('.kpis-skeleton'), null, { timeout: 20000 });
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => ({ cls: window.__cls, shifts: window.__shifts }));
+        console.log(`${label}: CLS ${atMount.toFixed(4)} after mount, ${r.cls.toFixed(4)} after data`);
+        if (atMount >= CLS_BUDGET || r.cls >= CLS_BUDGET) failures.push(`[${label}] layout shift ${atMount.toFixed(4)} after mount, ${r.cls.toFixed(4)} after data (budget ${CLS_BUDGET}): ${r.shifts.join(' | ')}`);
+        pages++;
+      } catch (e) {
+        failures.push(`[${label}] ${e.message}`);
+      }
+      await ctx.close();
+    }
+  }
+  console.log('layout stability pass done');
+}
+
 try {
   if (run('matrix')) for (const device of DEVICE_NAMES) {
     for (const theme of THEMES) {
@@ -1046,6 +1101,7 @@ try {
     await ctx.close();
   }
   if (run('embed')) await embedPass();
+  if (run('cls')) await clsPass();
   // Static check: built HTML must not contain inline scripts.
   const ctx = await browser.newContext();
   const p = await ctx.newPage();

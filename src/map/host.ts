@@ -13,6 +13,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { t, getLang, type Lang } from '../i18n';
 import { loadAdmin, type Admin } from '../lib/admin';
+import { loadManifest } from '../lib/data';
 import { prefersReducedMotion } from '../lib/dom';
 import { isEmbed } from '../lib/embed';
 import { TAIWAN_BOUNDS, type BBox } from '../lib/geo';
@@ -75,6 +76,7 @@ export class MapHost {
   padding: PaddingFn = () => ({ top: 24, right: 24, bottom: 24, left: 24 });
   private projection: 'globe' | 'mercator' = 'mercator';
   private lastFit: { bounds: [[number, number], [number, number]]; maxZoom: number; at: number } | null = null;
+  private readonly attribution: AttributionControl;
 
   constructor(container: HTMLElement) {
     const palette = readPalette();
@@ -102,7 +104,10 @@ export class MapHost {
     this.map.keyboard.disableRotation();
     this.map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
     this.map.addControl(new ScaleControl({ maxWidth: 96, unit: 'metric' }), 'bottom-right');
-    this.map.addControl(new AttributionControl({ compact: true }), 'bottom-right');
+    // The basemap credit is shown from the first frame (not only once the remote style has loaded, seconds later):
+    // the remote sources carry the same text, so nothing changes when they arrive. Dropped for the fallback basemap.
+    this.attribution = new AttributionControl({ compact: true, customAttribution: OSM_ATTR });
+    this.map.addControl(this.attribution, 'bottom-right');
 
     this.map.on('style.load', () => this.onStyleLoad());
     this.map.on('error', (e) => this.onError(e as unknown as { sourceId?: string; tile?: unknown; error?: { message?: string } }));
@@ -115,7 +120,8 @@ export class MapHost {
         document.body.dataset.mapZoom = this.map.getZoom().toFixed(2); // read by the smoke test
       }
     });
-    loadAdmin().then((a) => (this.admin = a), () => undefined);
+    // Boundaries for the offline fallback basemap (data URLs are versioned by the manifest: wait for it).
+    loadManifest().then(() => loadAdmin()).then((a) => (this.admin = a), () => undefined);
     this.loadRemote();
   }
 
@@ -157,6 +163,7 @@ export class MapHost {
       }
     }
     this.fallbackPending = false;
+    this.attribution.options.customAttribution = undefined; // the fallback style credits its own data
     this.map.setStyle(fallbackStyle(readPalette(), this.admin), { diff: false });
     if (wasRemote) this.basemapChanged.emit('fallback');
   }
@@ -365,10 +372,4 @@ export class MapHost {
   resize(): void {
     this.map.resize();
   }
-}
-
-/** Remove layers then sources if present (tolerant of a replaced style). */
-export function removeAll(map: MLMap, layers: string[], sources: string[]): void {
-  for (const l of layers) if (map.getLayer(l)) map.removeLayer(l);
-  for (const s of sources) if (map.getSource(s)) map.removeSource(s);
 }
