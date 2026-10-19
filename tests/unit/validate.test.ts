@@ -79,7 +79,8 @@ describe('other validators', () => {
       { type: 'Feature', geometry: { type: 'Point', coordinates: [120, 23] }, properties: {} },
     ] });
     expect(c.features).toHaveLength(1);
-    expect(Object.keys(c.features[0]!.properties).sort()).toEqual(['code1', 'count', 'county', 'lastOnset', 'town']);
+    expect(Object.keys(c.features[0]!.properties).sort()).toEqual(['code1', 'count', 'county', 'lastOnset', 'town', 'village']);
+    expect(c.features[0]!.properties.village).toBe(''); // older files have no village
   });
   it('vector: aligns week data and clamps risk codes', () => {
     const v = validateVector({ updated: '2026-10-12', weeks: [['2026-10-04', '2026-10-10'], ['2026-09-27', '2026-10-03']],
