@@ -28,6 +28,8 @@ export interface ForecastParams {
   rwSd: number;
   /** Relative infectiousness α of imported cases (many are isolated early). */
   importedWeight: number;
+  /** Strength γ of the temperature effect: R(h) × (relR0(T(h)) / relR0(T(0)))^γ (weather.ts); 0 = none. */
+  tempGamma: number;
   /** Forecast horizon, days (whole weeks). */
   horizon: number;
   sims: number;
@@ -110,7 +112,11 @@ function infectivity(src: ArrayLike<number>, w: Float64Array, t: number): number
   return s;
 }
 
-export function forecastArea(series: DailySeries, p: ForecastParams, seed = p.seed): AreaForecast {
+/**
+ * `tempFactors` (optional, weather.ts): multiplier on R for horizon days 0 … p.horizon, from the expected
+ * temperature path; applied to the projection only.
+ */
+export function forecastArea(series: DailySeries, p: ForecastParams, seed = p.seed, tempFactors: Float64Array | null = null): AreaForecast {
   const n = series.local.length;
   const T = n - 1;
   const asOf = series.start + T;
@@ -218,7 +224,7 @@ export function forecastArea(series: DailySeries, p: ForecastParams, seed = p.se
     for (let h = 1; h <= H; h++) {
       if (h % 7 === 1) z += p.rwSd * normal(r);
       const t = T + h;
-      const R = Math.max(0, 1 + (R0 - 1) * Math.pow(p.damping, h / 7)) * Math.exp(z);
+      const R = Math.max(0, 1 + (R0 - 1) * Math.pow(p.damping, h / 7)) * Math.exp(z) * (tempFactors?.[h] ?? 1);
       const loc = negbin(r, R * infectivity(path, w, t), p.dispersion);
       localPath[t] = loc;
       path[t] = loc + p.importedWeight * poisson(r, impRate);

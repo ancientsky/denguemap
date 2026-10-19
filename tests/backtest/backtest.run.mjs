@@ -13,10 +13,13 @@ import { epochDayOfDoy, isoFromEpochDay } from '../../src/lib/dates';
 import { covers, flatBaseline, wis } from '../../src/lib/forecast/evaluate';
 import { completeness, forecastArea } from '../../src/lib/forecast/model';
 import { BASE_PARAMS } from '../../src/lib/forecast/params';
-import { seriesOf, snapshotAt, truthBlocks } from '../../src/lib/forecast/snapshot';
+import { countyCounts, seriesOf, snapshotAt, truthBlocks } from '../../src/lib/forecast/snapshot';
+import { tempFactors, tempPath } from '../../src/lib/forecast/weather';
 
 const root = new URL('../../', import.meta.url);
 const loadYear = (y) => JSON.parse(readFileSync(new URL(`public/data/cases/${y}.json`, root), 'utf8'));
+// Weekly temperature since 2001 (NASA POWER bias-corrected to CWA station normals; docs/data-contract.md v4).
+const WEATHER = JSON.parse(readFileSync(new URL('public/data/weather.json', root), 'utf8'));
 
 const SERIES = [
   { year: 2002, county: '64000', name: '2002 高雄', role: 'tune' },
@@ -33,12 +36,14 @@ const SERIES = [
 ];
 const HORIZONS = [0, 1, 2, 3, 4]; // 0 = the as-of week (nowcast), 1–4 = weeks ahead
 const GRID = {
-  dispersion: [0.2, 0.5, 1],
-  damping: [0.8, 0.6, 0.5, 0.4],
-  rwSd: [0, 0.1, 0.2, 0.3, 0.45],
+  dispersion: [0.2, 0.5],
+  damping: [1, 0.8, 0.6, 0.5, 0.4],
+  rwSd: [0, 0.1, 0.2],
   importedWeight: [0.5],
-  // Cori's default prior (mean 5) vs a weakly informative one centred on 1 (matters when cases are few).
-  prior: [{ shape: 1, scale: 5 }, { shape: 2, scale: 0.5 }],
+  // Weakly informative prior centred on 1 (beat Cori's mean-5 default in the earlier tuning, docs history).
+  prior: [{ shape: 2, scale: 0.5 }],
+  // Temperature effect (weather.ts): 0 = none.
+  tempGamma: [0, 1, 2, 3, 4],
 };
 // Forecast accuracy by outbreak size (local cases in the 28 days before the as-of day).
 const BUCKETS = [[10, 29], [30, 99], [100, 299], [300, Infinity]];
@@ -58,7 +63,9 @@ function runSeries(s, p) {
     const asOf = epochDayOfDoy(s.year, doy);
     const start = asOf - 140;
     const snap = snapshotAt(set, asOf, start, comp, 7);
-    const f = forecastArea(seriesOf(set, snap, s.county, start), p, p.seed ^ doy);
+    const station = WEATHER.county[s.county ?? countyCounts(set, snap)[0]?.[0] ?? ''];
+    const factors = tempFactors(tempPath(WEATHER, station, asOf, p.horizon), p.tempGamma, p.horizon);
+    const f = forecastArea(seriesOf(set, snap, s.county, start), p, p.seed ^ doy, factors);
     const ends = HORIZONS.map((h) => asOf + 7 * h);
     const truth = truthBlocks(set, s.county, ends);
     if (f.status !== 'ok') {
@@ -122,15 +129,21 @@ const num = (v, d = 2) => (v == null ? '—' : v.toFixed(d));
 it('backtest', () => {
   // ---- 1. tune
   const trials = [];
-  for (const dispersion of GRID.dispersion) for (const damping of GRID.damping) for (const rwSd of GRID.rwSd) for (const importedWeight of GRID.importedWeight) for (const prior of GRID.prior) {
-    const p = { ...BASE_PARAMS, sims: 300, dispersion, damping, rwSd, importedWeight, prior };
-    trials.push({ dispersion, damping, rwSd, importedWeight, prior, ...score(p) });
+  for (const dispersion of GRID.dispersion) for (const damping of GRID.damping) for (const rwSd of GRID.rwSd) for (const importedWeight of GRID.importedWeight) for (const prior of GRID.prior) for (const tempGamma of GRID.tempGamma) {
+    const p = { ...BASE_PARAMS, sims: 300, dispersion, damping, rwSd, importedWeight, prior, tempGamma };
+    trials.push({ dispersion, damping, rwSd, importedWeight, prior, tempGamma, ...score(p) });
   }
   // Best WIS among the parameter sets whose 90 % intervals are honest enough; else the best-covered one.
   trials.sort((a, b) => a.score - b.score);
   const best = trials.find((x) => x.cov90 >= MIN_COVERAGE_90) ?? [...trials].sort((a, b) => b.cov90 - a.cov90)[0];
-  const tuned = { dispersion: best.dispersion, damping: best.damping, rwSd: best.rwSd, importedWeight: best.importedWeight, prior: best.prior };
+  const tuned = { dispersion: best.dispersion, damping: best.damping, rwSd: best.rwSd, importedWeight: best.importedWeight, prior: best.prior, tempGamma: best.tempGamma };
   const P = { ...BASE_PARAMS, ...tuned };
+  // Does temperature help? The best parameter set without it (same coverage rule), scored on every role.
+  const noTemp = trials.filter((x) => x.tempGamma === 0);
+  const bestNoTemp = noTemp.find((x) => x.cov90 >= MIN_COVERAGE_90) ?? [...noTemp].sort((a, b) => b.cov90 - a.cov90)[0];
+  const P0 = { ...BASE_PARAMS, dispersion: bestNoTemp.dispersion, damping: bestNoTemp.damping, rwSd: bestNoTemp.rwSd, importedWeight: bestNoTemp.importedWeight, prior: bestNoTemp.prior, tempGamma: 0 };
+  const poolWith = (params, role) => summarise({ scored: SERIES.filter((s) => s.role === role).flatMap((s) => runSeries(s, params).scored) });
+  const tempCompare = ['tune', 'holdout', 'small'].map((role) => ({ role, without: poolWith(P0, role), with: poolWith(P, role) }));
 
   // ---- 2. evaluate every series with the chosen parameters
   const series = SERIES.map((s) => {
@@ -150,6 +163,7 @@ it('backtest', () => {
     generatedAt: new Date().toISOString().slice(0, 10),
     params: tuned,
     overall,
+    tempCompare: tempCompare.map((c) => ({ role: c.role, without: c.without.map((x) => x.relWis), with: c.with.map((x) => x.relWis) })),
     bySize,
     series: series.map((s) => ({ name: s.name, role: s.role, origins: s.origins, declined: s.declined, missed: s.missed, perH: s.perH })),
   };
@@ -187,16 +201,29 @@ it('backtest', () => {
 | 對數 R 隨機漫步 σ（每週） | ${tuned.rwSd} | 傳播強度未來變化的不確定性 |
 | 境外移入感染力權重 α | ${tuned.importedWeight} | 固定值（未調參） |
 | R 事前分布 | ${priorName(tuned.prior)} | 病例少時事前分布影響較大 |
+| 氣溫效果強度 γ | ${tuned.tempGamma} | 0 = 不使用氣溫；R × (相對 R0(未來氣溫) ÷ 相對 R0(近 14 天氣溫))^γ |
 
 選參規則：第 1–4 週 90% 預測區間的合併涵蓋率都要達 ${pct(MIN_COVERAGE_90)}（WIS 本身會偏好過窄的區間），符合者中取平均相對 WIS 最低的一組。
 
 WIS 前 5 名（分數 = 平均相對 WIS，不論涵蓋率）：
 
-| k | φ | σ | R 事前分布 | 分數 | 90% 區間最低涵蓋率 |
+| k | φ | σ | γ | 分數 | 90% 區間最低涵蓋率 |
 |---|---|---|---|---|---|
-${trials.slice(0, 5).map((x) => `| ${x.dispersion} | ${x.damping} | ${x.rwSd} | ${priorName(x.prior)} | ${num(x.score, 3)} | ${pct(x.cov90)} |`).join('\n')}
+${trials.slice(0, 5).map((x) => `| ${x.dispersion} | ${x.damping} | ${x.rwSd} | ${x.tempGamma} | ${num(x.score, 3)} | ${pct(x.cov90)} |`).join('\n')}
 
 符合涵蓋率條件的最佳組合（即選定參數）：k ${best.dispersion}、φ ${best.damping}、σ ${best.rwSd}，分數 ${num(best.score, 3)}，90% 區間最低涵蓋率 ${pct(best.cov90)}。
+
+## 氣溫有沒有幫助？
+
+同樣的選參規則下，不使用氣溫（γ = 0）的最佳組合：k ${bestNoTemp.dispersion}、φ ${bestNoTemp.damping}、σ ${bestNoTemp.rwSd}（分數 ${num(bestNoTemp.score, 3)}）；
+選定組合 γ = ${tuned.tempGamma}（分數 ${num(best.score, 3)}）。各預測期的相對 WIS（越低越好）：
+
+| 資料 | 不用氣溫：第 1／2／3／4 週 | 使用氣溫：第 1／2／3／4 週 |
+|---|---|---|
+${tempCompare.map((c) => `| ${c.role === 'tune' ? '調參（2002、2014、2015）' : c.role === 'holdout' ? '驗證（2023）' : '小規模'} | ${c.without.filter((x) => x.h >= 1).map((x) => num(x.relWis)).join('／')} | ${c.with.filter((x) => x.h >= 1).map((x) => num(x.relWis)).join('／')} |`).join('\n')}
+
+氣溫資料：2001 年起 NASA POWER 每日氣溫，依 CWA 測站 1991–2020 月平均校正；未來 4 週用月平均加上目前偏差（每 14 天減半）。
+溫度與傳播力的關係採 Mordecai et al. 2017（埃及斑蚊，17.8–34.6 °C，峰值 29.1 °C）。
 
 ## 總結
 

@@ -1133,10 +1133,15 @@ try {
       await page.getByRole('button', { name: '2014 高雄' }).click();
       await ready('2014-08-20|64000|ok');
       if (!page.url().includes('asof=2014-08-20') || !page.url().includes('county=64000')) failures.push(`[forecast] preset not in URL: ${page.url()}`);
+      // Vector villages are current data only: hidden (with a note) while replaying.
+      if (await page.$('.fc-vec .switch-input')) failures.push('[forecast] vector toggle shown in replay');
       await page.getByRole('button', { name: '最新資料' }).click();
       await page.waitForFunction(() => !location.hash.includes('asof=') && !document.body.dataset.forecastReady?.startsWith('2014-'), null, { timeout: 20000 })
         .catch(() => failures.push(`[forecast] latest kept asof: ${page.url()}`));
       if (await page.$('.fc-legend .lg-actual')) failures.push('[forecast] "actual" shown for live data');
+      if (!(await page.$('.fc-vec .switch-input'))) failures.push('[forecast] vector toggle missing for live data');
+      const wx = await page.evaluate(() => [...document.querySelectorAll('.psec')].find((s) => s.querySelector('.psec-title')?.textContent === '氣溫')?.textContent ?? '');
+      if (!/°C/.test(wx)) failures.push(`[forecast] temperature section empty: ${wx.slice(0, 80)}`);
       await page.screenshot({ path: join(OUT, 'forecast-latest.png') });
     } catch (e) {
       failures.push(`[forecast] ${e.message}`);

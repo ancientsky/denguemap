@@ -535,6 +535,7 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 .lg-band90 { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .lg-risk1 { background: color-mix(in srgb, var(--local) 45%, transparent); }
 .lg-risk2 { background: color-mix(in srgb, var(--local) 18%, transparent); }
+.lg-vec { background: color-mix(in srgb, var(--risk-3) 16%, transparent); border: 1.5px solid var(--risk-3); }
 .fc-risk { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
 .lg-actual { width: 9px; height: 9px; background: var(--text); transform: rotate(45deg); margin: 0 3px; }
 .fc-chart-rt { height: 170px; }

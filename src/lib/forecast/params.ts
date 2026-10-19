@@ -17,13 +17,14 @@ export const BASE_PARAMS: ForecastParams = {
   damping: 0.8,
   rwSd: 0.1,
   importedWeight: 0.5,
+  tempGamma: 0,
   horizon: 28,
   sims: 1000,
   minCases: 10,
   seed: 20150801,
 };
 
-export type TunedParams = Pick<ForecastParams, 'dispersion' | 'damping' | 'rwSd' | 'importedWeight' | 'prior'>;
+export type TunedParams = Pick<ForecastParams, 'dispersion' | 'damping' | 'rwSd' | 'importedWeight' | 'prior' | 'tempGamma'>;
 
 export const PARAMS: ForecastParams = { ...BASE_PARAMS, ...(tuned as Partial<TunedParams>) };
 

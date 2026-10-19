@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mergeCaseYears } from '../../src/lib/aggregate';
-import { epochDayOfDoy } from '../../src/lib/dates';
+import { epochDay, epochDayOfDoy } from '../../src/lib/dates';
 import { cumulative, discreteGamma, gammaP, gammaQuantile } from '../../src/lib/forecast/dist';
 import { compass8, covEllipse, findFoci, linkClusters, type CaseRow } from '../../src/lib/forecast/foci';
 import { completeness, forecastArea, generationInterval, type ForecastParams } from '../../src/lib/forecast/model';
@@ -8,6 +8,7 @@ import { BASE_PARAMS } from '../../src/lib/forecast/params';
 import { negbin, rng } from '../../src/lib/forecast/random';
 import { seriesOf, snapshotAt, truthBlocks } from '../../src/lib/forecast/snapshot';
 import { DEFAULT_SURFACE, riskSurface } from '../../src/lib/forecast/surface';
+import { normalTemp, relR0, tempFactors, tempPath } from '../../src/lib/forecast/weather';
 import type { CasesYear } from '../../src/lib/types';
 
 const P: ForecastParams = { ...BASE_PARAMS, sims: 400 };
@@ -213,5 +214,53 @@ describe('forecast: risk surface', () => {
     expect(high.cells[0]!.pAny!).toBeGreaterThan(low.cells[0]!.pAny!);
     expect(high.cells[0]!.pAny!).toBeLessThanOrEqual(1);
     expect(high.cells[0]!.expected).toBeCloseTo(50 * high.cells[0]!.share, 6);
+  });
+});
+
+describe('forecast: temperature', () => {
+  const st = (daily: (number | null)[] = []) => ({
+    name: 'T', lat: 23, lng: 120.2, normals: { t: [18, 19, 21, 25, 27, 29, 30, 29, 28, 26, 23, 20], r: new Array(12).fill(50) },
+    t: [] as (number | null)[], r: [] as (number | null)[], s: '', daily: { start: '2015-08-01', t: daily, r: daily.map(() => 0) },
+  });
+  const wf = (s: ReturnType<typeof st>) => ({ updated: '2015-09-01', week0: '2001-01-01', weeks: 0, county: { '67000': 'X' }, series: { X: s } });
+
+  it('relative R0 peaks near 29 °C and vanishes outside 17.8–34.6 °C', () => {
+    expect(relR0(29.1)).toBeCloseTo(1, 6);
+    expect(relR0(28)).toBeLessThan(1);
+    expect(relR0(30.5)).toBeLessThan(1);
+    expect(relR0(17)).toBe(0);
+    expect(relR0(35)).toBe(0);
+    expect(relR0(22)).toBeLessThan(relR0(26));
+  });
+  it('normal temperature interpolates between mid-month values', () => {
+    const s = st();
+    expect(normalTemp(s, epochDay('2015-07-16'))).toBeCloseTo(30, 0);
+    const late = normalTemp(s, epochDay('2015-07-31'));
+    expect(late).toBeLessThan(30);
+    expect(late).toBeGreaterThan(29);
+  });
+  it('the anomaly decays towards the normal; autumn cooling lowers R', () => {
+    const asOf = epochDay('2015-09-30');
+    const s = st(new Array(70).fill(300)); // 30 °C observed: ~+2 °C anomaly at the end of September
+    const path = tempPath(wf(s), 'X', asOf, 28)!;
+    expect(path.recent).toBeCloseTo(30, 6);
+    expect(path.anomaly).toBeGreaterThan(1);
+    expect(path.temps[28]!).toBeLessThan(path.temps[0]!);
+    const f = tempFactors(path, 1, 28)!;
+    expect(f[0]).toBeCloseTo(1, 6);
+    expect(f[28]!).toBeLessThan(1);
+    expect(tempFactors(path, 0, 28)).toBeNull();
+    expect(tempPath(wf(st()), 'X', asOf, 28)).toBeNull(); // no observations
+  });
+  it('the factor is capped and applied to the projection only', () => {
+    const asOf = epochDay('2015-04-01');
+    const s = st(new Array(70).fill(190)); // cool start: relR0(19) is small
+    const f = tempFactors(tempPath(wf(s), 'X', asOf, 28), 2, 28);
+    if (f) for (const v of f) expect(v).toBeLessThanOrEqual(3);
+    const x = renewal(1.3, 120, NO_DELAY).map(Math.round);
+    const base = forecastArea({ start: 0, local: x, imported: new Float64Array(120) }, NO_DELAY);
+    const halved = forecastArea({ start: 0, local: x, imported: new Float64Array(120) }, NO_DELAY, NO_DELAY.seed, new Float64Array(29).fill(0.5));
+    expect(halved.rt).toEqual(base.rt);
+    expect(halved.weeks.at(-1)!.q!.q50).toBeLessThan(base.weeks.at(-1)!.q!.q50);
   });
 });

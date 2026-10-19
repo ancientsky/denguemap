@@ -18,6 +18,7 @@ import { compass8, DEFAULT_FOCI, findFoci, type Focus } from '../lib/forecast/fo
 import { completeness, forecastArea, type AreaForecast } from '../lib/forecast/model';
 import { PARAMS, SURFACE } from '../lib/forecast/params';
 import { riskSurface, surfacePoints, type RiskSurface } from '../lib/forecast/surface';
+import { relR0, tempFactors, tempPath, validateWeather, type TempPath, type WeatherFile } from '../lib/forecast/weather';
 import spatialBacktest from '../lib/forecast/backtest-spatial.json';
 import { countyCounts, localRows, seriesOf, snapshotAt, truthBlocks, type Snapshot } from '../lib/forecast/snapshot';
 import backtest from '../lib/forecast/backtest.json';
@@ -28,6 +29,7 @@ import type { MapHost, Overlay, OverlayCtx } from '../map/host';
 import { removeAll } from '../map/layers';
 import { cssVar, themeChanged } from '../theme';
 import { ft } from './forecastText';
+import { addVectorLayers, loadVectorBundle, triggerText, vectorFC, villageLabel, villagePopup, weekOf, type VectorBundle } from './vectorData';
 import type { View, ViewContext } from './types';
 import { dataTable, kpis, legendItem, loadingBlock, panel, section, select, toggle, type KpiSpec } from './ui';
 
@@ -51,6 +53,7 @@ interface Backtest {
 const BT = backtest as unknown as Backtest;
 const BTS = spatialBacktest as unknown as { overall: { holdout: { cap50: number | null; cap90: number | null; baseCap90: number | null } } };
 
+const V = { fill: 'dm-fcv-fill', line: 'dm-fcv-line', ptsAll: 'dm-fcv-pts-all', ptsNp: 'dm-fcv-pts-np', poly: 'dm-fcv-poly', pts: 'dm-fcv-pts' };
 const L = {
   risk: 'dm-fc-risk', cases: 'dm-fc-cases', last: 'dm-fc-last', lastLine: 'dm-fc-last-line', prev: 'dm-fc-prev',
   track: 'dm-fc-track', trackPt: 'dm-fc-track-pt', arrowHalo: 'dm-fc-arrow-halo', arrow: 'dm-fc-arrow',
@@ -59,6 +62,7 @@ const S = { risk: 'dm-fc-risk', cases: 'dm-fc-cases', ell: 'dm-fc-ell', track: '
 
 interface MapData {
   risk: GeoJSON.FeatureCollection<GeoJSON.Polygon> | null;
+  vector: { polys: GeoJSON.FeatureCollection; pts: GeoJSON.FeatureCollection } | null;
   cases: GeoJSON.FeatureCollection<GeoJSON.Point>;
   ellipses: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
   tracks: GeoJSON.FeatureCollection<GeoJSON.LineString>;
@@ -74,6 +78,11 @@ class ForecastOverlay implements Overlay {
       map.addSource(S.risk, { type: 'geojson', data: this.data.risk });
       map.addLayer({ id: L.risk, type: 'fill', source: S.risk, paint: {
         'fill-color': p.local, 'fill-opacity': ['match', ['get', 'cls'], 1, 0.34, 0.13], 'fill-antialias': false } }, beforeId);
+    }
+    if (this.data.vector) {
+      map.addSource(V.poly, { type: 'geojson', data: this.data.vector.polys });
+      map.addSource(V.pts, { type: 'geojson', data: this.data.vector.pts });
+      addVectorLayers(map, p, V, { fillOpacity: 0.16, minzoom: 11 });
     }
     map.addSource(S.ell, { type: 'geojson', data: this.data.ellipses });
     map.addLayer({ id: L.prev, type: 'line', source: S.ell, filter: ['==', ['get', 'kind'], 'prev'],
@@ -100,13 +109,15 @@ class ForecastOverlay implements Overlay {
       paint: { 'line-color': p.local, 'line-width': 3 } }, beforeId);
     if (!this.unbind.length) {
       if (this.data.risk) this.unbind.push(this.host.interactive(L.risk, this.onPick));
+      if (this.data.vector) for (const id of [V.fill, V.ptsAll, V.ptsNp]) this.unbind.push(this.host.interactive(id, this.onPick));
       this.unbind.push(this.host.interactive(L.last, this.onPick));
     }
   }
   uninstall(map: MLMap): void {
     for (const u of this.unbind) u();
     this.unbind = [];
-    removeAll(map, [L.arrow, L.arrowHalo, L.trackPt, L.track, L.cases, L.lastLine, L.last, L.prev, L.risk], [S.arrow, S.trackPt, S.track, S.cases, S.ell, S.risk]);
+    removeAll(map, [L.arrow, L.arrowHalo, L.trackPt, L.track, L.cases, L.lastLine, L.last, L.prev, V.ptsNp, V.ptsAll, V.line, V.fill, L.risk],
+      [S.arrow, S.trackPt, S.track, S.cases, S.ell, V.pts, V.poly, S.risk]);
   }
 }
 
@@ -125,7 +136,7 @@ function arrow(a: [number, number], b: [number, number], i: number): GeoJSON.Fea
   return { type: 'Feature', id: i, properties: { i }, geometry: { type: 'MultiLineString', coordinates: [[a, b], [wing(1), b, wing(-1)]] } };
 }
 
-function mapData(set: CaseSet, snap: Snapshot, county: string | null, foci: Focus[], surf: RiskSurface | null): MapData {
+function mapData(set: CaseSet, snap: Snapshot, county: string | null, foci: Focus[], surf: RiskSurface | null, vec: VectorBundle | null): MapData {
   const byPt = new Map<number, { n: number; last: number }>();
   for (let i = 0; i < snap.length; i++) {
     if (snap.imp[i] || snap.day[i]! <= snap.asOf - 28) continue;
@@ -154,7 +165,8 @@ function mapData(set: CaseSet, snap: Snapshot, county: string | null, foci: Focu
   const risk: MapData['risk'] = surf ? { type: 'FeatureCollection', features: surf.cells.map((c, i) => ({
     type: 'Feature', id: i, properties: { kind: 'risk', r: i, cls: c.cls }, geometry: { type: 'Polygon', coordinates: [c.ring] },
   })) } : null;
-  return { risk, cases, ellipses, tracks, trackPts, arrows };
+  const vector = vec ? vectorFC(vec, 0, (v) => weekOf(v, 0)[0] >= 2 && (!county || v[5]?.slice(0, 5) === county)) : null;
+  return { risk, vector, cases, ellipses, tracks, trackPts, arrows };
 }
 
 const fmt1 = (v: number) => v.toFixed(1);
@@ -198,10 +210,10 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   const parse = (p: Record<string, string>) => {
     const a = p.asof && isISODate(p.asof) ? epochDay(p.asof) : NaN;
     const replay = Number.isFinite(a) && a >= minDay && a < liveDay;
-    return { asOf: replay ? a : liveDay, replay, county: p.county && COUNTY_RE.test(p.county) ? p.county : null, risk: p.risk !== '0' };
+    return { asOf: replay ? a : liveDay, replay, county: p.county && COUNTY_RE.test(p.county) ? p.county : null, risk: p.risk !== '0', mv: p.mv !== '0' };
   };
   let st = parse(ctx.params);
-  const persist = () => setParams({ ...(st.replay ? { asof: isoFromEpochDay(st.asOf) } : {}), ...(st.county ? { county: st.county } : {}), ...(st.risk ? {} : { risk: '0' }) });
+  const persist = () => setParams({ ...(st.replay ? { asof: isoFromEpochDay(st.asOf) } : {}), ...(st.county ? { county: st.county } : {}), ...(st.risk ? {} : { risk: '0' }), ...(st.mv ? {} : { mv: '0' }) });
 
   const yearOf = (d: number) => +isoFromEpochDay(d).slice(0, 4);
   async function loadSet(asOf: number, replay: boolean): Promise<CaseSet> {
@@ -216,6 +228,7 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   const controls = h('div', { class: 'fc-controls' });
   const status = h('div', { class: 'fc-status' });
   const kpiSlot = h('div');
+  const wxBody = h('div', { class: 'fc-risk' });
   const chartTitleId = nextId('fc');
   const chartEl = h('div', { class: 'chart fc-chart', role: 'img', 'aria-label': ft('chartTitle') });
   const chartNote = h('p', { class: 'card-note' });
@@ -232,11 +245,13 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   const rtTable = h('div');
   const fociList = h('ul', { class: 'list-cards' });
   const riskBody = h('div', { class: 'fc-risk' });
+  const vecBody = h('div', { class: 'fc-risk fc-vec' });
   const legend = h('ul', { class: 'legend' },
     h('li', { class: 'legend-title' }, ft('lgCases')),
     ...[0, 1, 2, 3].map((r) => h('li', { class: 'legend-item' }, h('span', { class: 'lg-dot', style: { '--sw': `var(--rec-${r})` }, 'aria-hidden': 'true' }), t(`rec.${r}` as 'rec.0'))),
     h('li', { class: 'legend-item' }, h('span', { class: 'lg-square lg-risk1', 'aria-hidden': 'true' }), h('span', null, ft('lgRisk50'))),
     h('li', { class: 'legend-item' }, h('span', { class: 'lg-square lg-risk2', 'aria-hidden': 'true' }), h('span', null, ft('lgRisk90'))),
+    h('li', { class: 'legend-item' }, h('span', { class: 'lg-square lg-vec', 'aria-hidden': 'true' }), h('span', null, ft('lgVec'))),
     legendItem('var(--accent)', ft('lgLast14'), 'square'),
     h('li', { class: 'legend-item' }, h('span', { class: 'lg-dash', 'aria-hidden': 'true' }), h('span', null, ft('lgPrev14'))),
     h('li', { class: 'legend-item' }, h('span', { class: 'lg-track', 'aria-hidden': 'true' }), h('span', null, ft('lgTrack'))),
@@ -250,14 +265,17 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
       h('li', null, ft('m4'), h('ul', null, ...holdout.filter((x) => x.h >= 1).map((x) =>
         h('li', null, `${ft('backtestH', { h: x.h })}：${ft('backtestRow', { w: x.relWis == null ? '—' : x.relWis.toFixed(2), c: x.cov90 == null ? '—' : fmtPct(x.cov90) })}`)))),
       h('li', null, ft('m5')),
+      h('li', null, ft('m7')),
       h('li', null, ft('m6', { m: SURFACE.cellM, s1: SURFACE.sigma1M, s2: fmtNum(SURFACE.sigma2M), rho: fmtPct(SURFACE.rho), beta: fmtPct(SURFACE.beta) }))),
     h('p', null, extLink(REPORT_URL, ft('mReport'))));
   pnl.body.replaceChildren(
     h('div', { class: 'notice-warn fc-banner', role: 'note' }, icon('alert'), h('div', null, h('p', null, h('strong', null, ft('bannerTitle'))), h('p', null, ft('bannerBody')))),
     controls, status, kpiSlot,
+    section(ft('wxTitle'), wxBody),
     h('section', { class: 'psec', 'aria-labelledby': chartTitleId }, h('h2', { class: 'psec-title', id: chartTitleId }, ft('chartTitle')), fanLegend, chartEl, chartNote, chartTable),
     section(ft('rtTitle', { n: 84 }), rtEl, h('p', { class: 'card-note' }, ft('rtNote')), rtTable),
     section(ft('riskTitle'), riskBody),
+    section(ft('vecTitle'), vecBody),
     section(ft('fociTitle'), h('p', { class: 'hint' }, ft('fociNote', { m: DEFAULT_FOCI.linkM, n: DEFAULT_FOCI.minCases })), fociList),
     section(ft('legendTitle'), legend),
     method);
@@ -285,6 +303,11 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   let set: CaseSet | null = null;
   let setKey = '';
   let last: { f: AreaForecast; truth: number[] | null; snap: Snapshot; foci: Focus[]; surf: RiskSurface | null } | null = null;
+  // Vector data are current only: loaded for live views, never shown in replay.
+  let vec: VectorBundle | null = null;
+  let weather: WeatherFile | null = null;
+  let weatherTried = false;
+  let vecError = false;
   let token = 0;
 
   const countyName = (code: string | null) => (code ? placeName(admin?.countyByCode.get(code)) || code : ft('national'));
@@ -484,7 +507,16 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
     // Replay: what had been published by the as-of day (seeded thinning). Live data are already incomplete.
     const snap = snapshotAt(set, st.asOf, st.asOf - LOOKBACK, st.replay ? comp : null, 11);
     const series = seriesOf(set, snap, st.county, st.asOf - LOOKBACK);
-    const f = forecastArea(series, PARAMS, PARAMS.seed ^ st.asOf ^ (st.county ? Number(st.county) : 0));
+    if (!weatherTried) {
+      weatherTried = true;
+      weather = await loadData('weather.json', validateWeather).catch(() => null);
+      if (my !== token || destroyed) return;
+    }
+    // National view: the station of the county with the most recent local cases.
+    const wxCounty = st.county ?? countyCounts(set, snap)[0]?.[0] ?? null;
+    const wx = weather && wxCounty ? tempPath(weather, weather.county[wxCounty], st.asOf, PARAMS.horizon) : null;
+    const f = forecastArea(series, PARAMS, PARAMS.seed ^ st.asOf ^ (st.county ? Number(st.county) : 0), tempFactors(wx, PARAMS.tempGamma, PARAMS.horizon));
+    renderWeather(wx);
     const truth = st.replay ? truthBlocks(set, st.county, f.weeks.filter((w) => w.kind !== 'past').map((w) => w.end)) : null;
     const foci = findFoci(localRows(set, snap, st.county, st.asOf - 27), st.asOf);
     let surf: RiskSurface | null = null;
@@ -492,8 +524,17 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
       const pts = surfacePoints(set, snap, st.county, PARAMS);
       surf = riskSurface(pts.infectors, pts.older, SURFACE, f.samples14);
     }
+    if (!st.replay && !vec && !vecError) {
+      try {
+        vec = await loadVectorBundle();
+      } catch {
+        vecError = true;
+      }
+      if (my !== token || destroyed) return;
+    }
     last = { f, truth, snap, foci, surf };
     renderRisk(surf);
+    renderVector(surf);
     renderControls(snap);
     renderStatus(f);
     renderKpis(f);
@@ -510,9 +551,14 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
   function renderMap(refit = true): void {
     if (!host || !last || !set) return;
     const { snap, foci, surf } = last;
-    const data = mapData(set, snap, st.county, foci, st.risk ? surf : null);
+    const data = mapData(set, snap, st.county, foci, st.risk ? surf : null, !st.replay && st.mv ? vec : null);
     const onPick = (e: MapLayerMouseEvent, hover: boolean) => {
       const props = e.features?.[0]?.properties;
+      if (props?.k != null && vec) {
+        const v = vec.data.villages[Number(props.k)];
+        if (v) host.showPopup(e.lngLat, villagePopup(vec, admin, v, 0, !Number(props.np)), hover);
+        return;
+      }
       if (props?.kind === 'risk') {
         const c = surf?.cells[Number(props.r)];
         if (!c) return;
@@ -536,6 +582,61 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
       ? [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))]
       : countyBox ?? TAIWAN_BOUNDS;
     host.fit(target, boxes.length ? 13 : 9);
+  }
+
+  function renderVector(surf: RiskSurface | null): void {
+    if (st.replay) {
+      vecBody.replaceChildren(h('p', { class: 'hint' }, ft('vecReplay')));
+      return;
+    }
+    if (!vec) {
+      vecBody.replaceChildren(h('p', { class: 'hint' }, ft('vecLoadError')));
+      return;
+    }
+    const b = vec;
+    const wk = b.data.weeks[0];
+    const rows: { v: (typeof b.data.villages)[number]; cls: 1 | 2; share: number }[] = [];
+    if (surf) {
+      for (const v of b.data.villages) {
+        if (weekOf(v, 0)[0] < 2 || (st.county && v[5]?.slice(0, 5) !== st.county)) continue;
+        const at = surf.locate(v[3], v[4]);
+        if (at && at.cls <= 2) rows.push({ v, cls: at.cls as 1 | 2, share: at.share });
+      }
+      rows.sort((a, c) => a.cls - c.cls || c.share - a.share);
+    }
+    const list = h('ul', { class: 'list-cards' }, ...rows.slice(0, 10).map(({ v, cls }) => {
+      const r = weekOf(v, 0)[0];
+      return h('li', null, h('button', { type: 'button', class: 'card-btn', on: { click: () => host?.jump([v[3], v[4]], 15) } },
+        h('span', { class: 'card-title' }, h('span', null, villageLabel(admin, v)), h('span', { class: 'pill risk', style: { '--sw': `var(--risk-${r})` } }, t(r === 3 ? 'vector.risk3' : 'vector.risk2'))),
+        h('span', { class: 'card-meta fc-focus-meta' }, h('span', null, ft(cls === 1 ? 'vecIn1' : 'vecIn2')), h('span', null, triggerText(weekOf(v, 0))))));
+    }));
+    vecBody.replaceChildren(
+      h('p', null, ft('vecIntro')),
+      h('p', { class: 'hint' }, wk ? ft('vecWeek', { from: fmtDate(wk[0], 'short'), to: fmtDate(wk[1], 'short') }) : ''),
+      !surf ? h('p', { class: 'hint' }, ft('vecNoRisk')) : rows.length ? list : h('p', { class: 'hint' }, ft('vecNone')),
+      h('p', { class: 'hint' }, ft('vecBias')),
+      toggle(ft('vecToggle'), st.mv, (on) => {
+        st = { ...st, mv: on };
+        persist();
+        renderMap(false);
+      }));
+  }
+
+  function renderWeather(wx: TempPath | null): void {
+    if (!wx || !weather) {
+      wxBody.replaceChildren(h('p', { class: 'hint' }, ft('wxNone')));
+      return;
+    }
+    const name = weather.series[wx.station]?.name ?? wx.station;
+    const end = wx.temps[wx.temps.length - 1]!;
+    const base = relR0(wx.temps[0]!);
+    const ratio = base > 0.05 ? relR0(end) / base : null;
+    const sign = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
+    wxBody.replaceChildren(
+      h('p', null, ft('wxNow', { t: wx.recent.toFixed(1), a: sign(wx.anomaly), st: name })),
+      h('p', null, ft('wxAhead', { t: end.toFixed(1), r: ratio == null ? '—' : fmtPct(ratio) })),
+      h('p', { class: 'hint' }, PARAMS.tempGamma > 0 ? ft('wxUsed', { g: PARAMS.tempGamma }) : ft('wxUnused')),
+      h('p', { class: 'hint' }, ft('wxSource')));
   }
 
   function renderRisk(surf: RiskSurface | null): void {
@@ -571,9 +672,12 @@ export default async function forecastView(ctx: ViewContext): Promise<View> {
     update(params) {
       const next = parse(params);
       if (next.asOf === st.asOf && next.replay === st.replay && next.county === st.county) {
-        if (next.risk !== st.risk) {
+        if (next.risk !== st.risk || next.mv !== st.mv) {
           st = next;
-          if (last) renderRisk(last.surf);
+          if (last) {
+            renderRisk(last.surf);
+            renderVector(last.surf);
+          }
           renderMap(false);
         }
         return;
