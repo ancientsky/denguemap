@@ -10,7 +10,9 @@
  * Env: DENGUE_BASE_URL (default CDC host), TRAVEL_BASE_URL (safetravel raw files), DATA_OUT_DIR (default public/data),
  *      DATA_ALLOW_SHRINK=1 (skip the case-count shrink guard),
  *      DATA_FULL=1 (full verify: also fetch the frozen years; they are replaced only if not lower than committed),
- *      DATA_TODAY=YYYY-MM-DD (simulate another Taiwan calendar day, e.g. a year rollover; tests / debugging only).
+ *      DATA_TODAY=YYYY-MM-DD (simulate another Taiwan calendar day, e.g. a year rollover; tests / debugging only),
+ *      CWA_KEY (CWA open-data key; without it weather.json is left as is), DATA_WEATHER_HISTORY=1 (re-fetch the
+ *      2001→ weather history; it is fetched automatically when weather.json has none).
  */
 import { appendFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -28,6 +30,7 @@ import { buildNs1Source } from './sources/ns1.mjs';
 import { buildNoticesSource, recentCountriesFromImportedJson } from './sources/notices.mjs';
 import { buildTravelSource } from './sources/travel.mjs';
 import { buildVectorSource } from './sources/vector.mjs';
+import { buildWeatherSource } from './sources/weather.mjs';
 import { buildWorldFile } from './world.mjs';
 import { toJson, isoUtc, twDate, parseYmd } from './util.mjs';
 import {
@@ -74,6 +77,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
  * @param {()=>Promise<any>} [options.atlasLoader]
  * @param {number[]} [options.retryDelaysMs] waits before re-fetching rejected (year, type) pairs / imported years (default 90 s, 180 s; 0 s when backoffMs is 0)
  * @param {string[]} [options.only] restrict to these source names (debug)
+ * @param {string} [options.cwaKey] CWA open-data key (default env CWA_KEY)
+ * @param {boolean} [options.weatherHistory] re-fetch the weather history (default env DATA_WEATHER_HISTORY=1)
  */
 export async function run(options = {}) {
   const log = options.log ?? ((m) => console.log(m));
@@ -191,7 +196,16 @@ export async function run(options = {}) {
     return { files: { 'geo/world.topo.json': w.json }, meta: { countries: w.countries, gzip: w.gzip } };
   }) : null;
 
-  const settled = await Promise.all([casesP, importedP, noticesP, clustersP, vectorP, ns1P, adminP, travelP, worldP]);
+  // Weather feeds only the internal forecast page: not a manifest source (no site-wide freshness warning).
+  const weatherP = wanted('weather') ? guarded('weather', async (ctx) => buildWeatherSource(ctx, {
+    key: options.cwaKey ?? process.env.CWA_KEY,
+    committed: await readJson(outDir, 'weather.json'),
+    history: options.weatherHistory ?? process.env.DATA_WEATHER_HISTORY === '1',
+    fetchImpl: options.fetchImpl,
+    backoffMs: options.backoffMs,
+  })) : null;
+
+  const settled = await Promise.all([casesP, importedP, noticesP, clustersP, vectorP, ns1P, adminP, travelP, worldP, weatherP]);
   /** @type {Record<string, SourceResult>} */
   const results = {};
   for (const r of settled) if (r) results[r.name] = r;

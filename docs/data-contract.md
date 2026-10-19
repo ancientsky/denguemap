@@ -240,3 +240,32 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 ### 診斷（不入庫）
 
 每個 asmx 請求都記錄狀態碼、耗時、位元組、回應 `Date`、`Server`／`X-Powered-By`，以及 `ARRAffinity` cookie 值的 8 碼雜湊（絕不輸出 cookie 本身）。任何年份被拒時執行一次探測：對被截斷的一年再發 4 次本土 `GetDengueLocation`（每次新連線 `Connection: close`、不帶 cookie、間隔 5 秒），外加每個已見過的實例各 1 次（帶回該實例的 cookie，最多 4 個），並把表格（attempt／instance／year／records／cases／truncated）與一句結論（「truncation correlates with instance X」／「all instances truncated → data-state issue upstream」／…）以及一行 JSON 健康紀錄寫入 `$GITHUB_STEP_SUMMARY`。這些資訊不寫入 repo。
+
+## v4 增補（2026-10-19）：weather.json（只供內部預測頁）
+
+不列入 `manifest.sources`（不影響全站的「資料更新延遲」提示），但與其他檔案一樣列在 `manifest.files` 以版本化載入。
+
+```jsonc
+{
+  "updated": "2026-10-19",        // 臺灣日期；同一天內不重抓（管線每 3 小時跑一次）
+  "week0": "2001-01-01",          // 第 0 週的星期一；第 w 週 = week0 + 7w 天起的 7 天
+  "weeks": 1347,                  // 每條序列的週數（到本週為止）
+  "county": { "67000": "467410", … },   // 縣市 → 代表測站（無署屬有人站的縣市用鄰近低地測站）
+  "series": {
+    "467410": {
+      "name": "臺南", "lat": 22.9932, "lng": 120.2047,
+      "normals": { "t": [17.9, …], "r": [20.7, …] },  // CWA 1991–2020 月平均氣溫 °C、月雨量 mm（C-B0027-001）
+      "t": [182, …, null],        // 週平均氣溫 × 10（°C）
+      "r": [5, …, null],          // 週雨量（mm）
+      "s": "ppp…ccc-",            // 每週來源：c = CWA 觀測、p = NASA POWER 經測站月平均校正、- = 缺
+      "daily": { "start": "2026-08-21", "t": [285, …], "r": [0.0, …] }  // 最近 60 天 CWA 日資料（× 10 / mm），用來湊滿整週
+    }
+  }
+}
+```
+
+- **即時**：CWA 開放資料 C-B0024-001（加 `Date` 參數可取得最近約 31 天逐時觀測），每日彙整後，整週到齊才寫入週序列。
+  金鑰來自 GitHub Actions secret `CWA`（環境變數 `CWA_KEY`），只放在送往 `opendata.cwa.gov.tw` 的 `Authorization` 標頭，不寫入檔案或紀錄。
+- **歷史**：CWA API 沒有多年逐日資料，2001 年起的歷史改用 NASA POWER（T2M、PRECTOTCORR），
+  依各測站 2002–2020 月平均與 CWA 1991–2020 月平均的差（氣溫）或比（雨量）校正。第一次執行或手動勾選 `weather_history` 時才抓。
+- 沒有金鑰（本機、測試）時此來源略過，既有檔案不動。

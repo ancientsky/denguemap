@@ -247,6 +247,19 @@ export function validateFileShape(path, text) {
       codes.add(g.properties.iso2);
     }
     for (const k of ['sg', 'mv', 'tw']) if (!codes.has(k)) err(`${k} missing`);
+  } else if (path === 'weather.json') {
+    if (!isDate(j.updated) || j.week0 !== '2001-01-01' || !isInt(j.weeks) || j.weeks < 1 || j.weeks > 4000) err('bad header');
+    const okVal = (/** @type {unknown} */ v, /** @type {number} */ lo, /** @type {number} */ hi) => v === null || (isNum(v) && v >= lo && v <= hi);
+    for (const [id, st] of Object.entries(j.series ?? {})) {
+      const s = /** @type {any} */ (st);
+      if (!/^[0-9A-Z]{6}$/.test(id)) err('bad station id');
+      if (!isNum(s.lat) || !isNum(s.lng) || !inBbox(s.lng, s.lat)) err(`${id}: bad position`);
+      if (s.t?.length !== j.weeks || s.r?.length !== j.weeks || typeof s.s !== 'string' || s.s.length !== j.weeks || !/^[cp-]*$/.test(s.s)) err(`${id}: bad weekly arrays`);
+      if (!s.t.every((/** @type {unknown} */ v) => okVal(v, -100, 450)) || !s.r.every((/** @type {unknown} */ v) => okVal(v, 0, 5000))) err(`${id}: weekly value out of range`);
+      if (s.normals?.t?.length !== 12 || s.normals?.r?.length !== 12 || !s.normals.t.every((/** @type {unknown} */ v) => okVal(v, -10, 40)) || !s.normals.r.every((/** @type {unknown} */ v) => okVal(v, 0, 3000))) err(`${id}: bad normals`);
+      if (!isDate(s.daily?.start) || !Array.isArray(s.daily.t) || s.daily.t.length !== s.daily.r?.length || !s.daily.t.every((/** @type {unknown} */ v) => okVal(v, -200, 450)) || !s.daily.r.every((/** @type {unknown} */ v) => okVal(v, 0, 1000))) err(`${id}: bad daily window`);
+    }
+    for (const [c, id] of Object.entries(j.county ?? {})) if (!/^\d{5}$/.test(c) || !(String(id) in (j.series ?? {}))) err('bad county map');
   } else if (path.endsWith('.topo.json')) {
     if (j.type !== 'Topology' || typeof j.objects !== 'object' || !Array.isArray(j.arcs)) err('not a topology');
   } else {

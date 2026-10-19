@@ -15,6 +15,10 @@ on:
         description: "Full verify: also fetch the frozen case years (older than last year); replaced only if not lower"
         type: boolean
         default: false
+      weather_history:
+        description: "Re-fetch the 2001→ weather history (NASA POWER, bias-corrected to CWA station normals)"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -60,6 +64,9 @@ jobs:
         env:
           DATA_ALLOW_SHRINK: ${{ inputs.allow_shrink && '1' || '' }}
           DATA_FULL: ${{ (inputs.full || github.event.schedule == '41 19 * * 6') && '1' || '' }}
+          DATA_WEATHER_HISTORY: ${{ inputs.weather_history && '1' || '' }}
+          # CWA open-data key: only sent to opendata.cwa.gov.tw in the Authorization header, never logged
+          CWA_KEY: ${{ secrets.CWA }}
         run: npm run data
 
       - name: Commit data
