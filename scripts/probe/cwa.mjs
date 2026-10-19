@@ -28,8 +28,8 @@ function shape(v, path = '$', out = [], depth = 0) {
   if (out.length > 120) return out;
   if (Array.isArray(v)) {
     out.push(`${path}: array[${v.length}]`);
-    if (v.length && depth < 7) shape(v[0], `${path}[0]`, out, depth + 1);
-    if (v.length > 1 && depth < 7 && typeof v[0] !== 'object') out.push(`${path}[last]: ${sample(v[v.length - 1])}`);
+    if (v.length && depth < 11) shape(v[0], `${path}[0]`, out, depth + 1);
+    if (v.length > 1 && depth < 11 && typeof v[0] !== 'object') out.push(`${path}[last]: ${sample(v[v.length - 1])}`);
   } else if (v && typeof v === 'object') {
     const keys = Object.keys(v);
     if (keys.length > 40) out.push(`${path}: object{${keys.length} keys: ${keys.slice(0, 12).join(', ')}…}`);
