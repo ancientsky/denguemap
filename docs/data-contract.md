@@ -255,6 +255,7 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
     "467410": {
       "name": "臺南", "lat": 22.9932, "lng": 120.2047,
       "normals": { "t": [17.9, …], "r": [20.7, …] },  // CWA 1991–2020 月平均氣溫 °C、月雨量 mm（C-B0027-001）
+      "normalsFrom": "cwa",       // cwa；或 power（CWA 沒有該站月平均時改用 NASA POWER 氣候值，歷史不做校正）
       "t": [182, …, null],        // 週平均氣溫 × 10（°C）
       "r": [5, …, null],          // 週雨量（mm）
       "s": "ppp…ccc-",            // 每週來源：c = CWA 觀測、p = NASA POWER 經測站月平均校正、- = 缺
@@ -268,4 +269,6 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
   金鑰來自 GitHub Actions secret `CWA`（環境變數 `CWA_KEY`），只放在送往 `opendata.cwa.gov.tw` 的 `Authorization` 標頭，不寫入檔案或紀錄。
 - **歷史**：CWA API 沒有多年逐日資料，2001 年起的歷史改用 NASA POWER（T2M、PRECTOTCORR），
   依各測站 2002–2020 月平均與 CWA 1991–2020 月平均的差（氣溫）或比（雨量）校正。第一次執行或手動勾選 `weather_history` 時才抓。
+- 測站遷移：設定的測站若已撤銷，依 C-B0074-001 的 `NewStationID` 改用新站（例：高雄 467440 → 467441），月平均沿用舊站；
+  `county` 與 `series` 的鍵都是實際使用的新站代碼。
 - 沒有金鑰（本機、測試）時此來源略過，既有檔案不動。

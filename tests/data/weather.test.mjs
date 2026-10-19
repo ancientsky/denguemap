@@ -32,11 +32,19 @@ function mockFetch(calls, { powerFails = false } = {}) {
     }
     const id = u.searchParams.get('StationID');
     if (u.pathname.endsWith('/C-B0074-001')) {
-      return json({ success: 'true', records: { data: { stationStatus: { station: [...new Set(Object.values(COUNTY_STATION))].map((s, i) => ({
-        StationID: s, status: '現存測站', StationName: `S${s}`, StationLatitude: String(22.5 + i * 0.1), StationLongitude: String(120.2 + i * 0.05),
-      })) } } } });
+      const list = [...new Set(Object.values(COUNTY_STATION))].map((s, i) => ({
+        StationID: s, status: '現存測站', StationName: `S${s}`, StationLatitude: String(22.5 + i * 0.1), StationLongitude: String(120.2 + i * 0.05), NewStationID: '',
+      }));
+      // 高雄 moved: the configured ID is revoked and points to its successor
+      const ks = list.find((x) => x.StationID === '467440');
+      ks.status = '已撤銷';
+      ks.NewStationID = '467441';
+      list.push({ ...ks, StationID: '467441', status: '現存測站', NewStationID: '' });
+      return json({ success: 'true', records: { data: { stationStatus: { station: list } } } });
     }
     if (u.pathname.endsWith('/C-B0027-001')) {
+      // no normals for the new 高雄 ID (kept under the old one) nor for 馬祖
+      if (id === '467441' || id === '467990') return json({ success: 'true', records: { data: { surfaceObs: { location: [] } } } });
       return json({ success: 'true', records: { data: { surfaceObs: { location: [{ stationObsStatistics: {
         AirTemperature: { monthly: NORMALS.t.map((v, m) => ({ Month: String(m + 1), Mean: String(27) })) },
         Precipitation: { monthly: NORMALS.r.map((v, m) => ({ Month: String(m + 1), Accumulation: String(v) })) },
@@ -95,6 +103,14 @@ describe('weather source', () => {
     expect(s.r[weekIndex('2026-10-05')]).toBe(168);
     expect(s.t.length).toBe(j.weeks);
     expect(out.meta.historyFetched).toBe(Object.keys(j.series).length);
+    // relocated station: the live ID is used, with the predecessor's normals
+    expect(j.county['64000']).toBe('467441');
+    expect(j.series['467441'].normalsFrom).toBe('cwa');
+    expect(j.series['467440']).toBeUndefined();
+    // no CWA normals: POWER climatology (so the history is left uncorrected: 26 °C)
+    expect(j.series['467990'].normalsFrom).toBe('power');
+    expect(j.series['467990'].t[weekIndex('2015-08-03')]).toBe(260);
+    expect(out.meta.missing).toEqual([]);
   });
 
   it('keeps going without history when POWER is down, and refuses to run without a key', async () => {

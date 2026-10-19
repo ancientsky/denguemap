@@ -26,7 +26,7 @@ const DAILY_KEEP = 60;
 /** County → CWA staffed station (counties without one use the nearest comparable lowland station). */
 export const COUNTY_STATION = /** @type {const} */ ({
   '67000': '467410', // 臺南
-  '64000': '467440', // 高雄
+  '64000': '467440', // 高雄 (relocated: the live station is its NewStationID 467441; normals stay with 467440)
   '10013': '467440', // 屏東 → 高雄
   '10010': '467480', // 嘉義縣 → 嘉義
   '10020': '467480', // 嘉義市
@@ -36,7 +36,7 @@ export const COUNTY_STATION = /** @type {const} */ ({
   '10008': '467490', // 南投 → 臺中
   '10005': '467490', // 苗栗 → 臺中
   '63000': '466920', // 臺北
-  '65000': '466880', // 新北 → 板橋
+  '65000': '466881', // 新北 (板橋 466880 was replaced by 466881 in 2023)
   '68000': '467050', // 桃園 → 新屋
   '10004': '467571', // 新竹縣 → 新竹
   '10018': '467571', // 新竹市
@@ -113,6 +113,24 @@ export function dailyFromHourly(obs) {
 }
 
 /**
+ * Monthly climatology (2002–2020) of POWER daily values, in the units of the CWA normals (°C, mm/month): used as
+ * the normals of stations CWA publishes none for (their history is then left uncorrected).
+ * @param {Record<string, number>} T2M @param {Record<string, number>} PREC
+ */
+export function powerNormals(T2M, PREC) {
+  const tSum = new Array(12).fill(0), tN = new Array(12).fill(0), rSum = new Array(12).fill(0), rN = new Array(12).fill(0);
+  for (const [k, v] of Object.entries(T2M)) {
+    const y = +k.slice(0, 4), m = +k.slice(4, 6) - 1;
+    if (!/^\d{8}$/.test(k) || y < 2002 || y > 2020) continue;
+    if (Number.isFinite(v) && v > -90) { tSum[m] += v; tN[m]++; }
+    const p = PREC[k];
+    if (Number.isFinite(p) && p >= 0) { rSum[m] += p; rN[m]++; }
+  }
+  const dim = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return { t: tSum.map((x, m) => (tN[m] ? x / tN[m] : 25)), r: rSum.map((x, m) => (rN[m] ? (x / rN[m]) * dim[m] : 100)) };
+}
+
+/**
  * Bias-corrected weekly series from POWER daily values.
  * @param {Record<string, number>} T2M @param {Record<string, number>} PREC  keys YYYYMMDD, fill -999
  * @param {{t:number[], r:number[]}} normals  CWA monthly normals (12 each)
@@ -179,44 +197,66 @@ export async function buildWeatherSource(ctx, opts) {
   const yesterday = isoFromDays(daysFromIso(todayIso) - 1);
   const ids = [...new Set(Object.values(COUNTY_STATION))].sort();
 
-  // ---- station list
+  // ---- station list (every status: relocated stations point to their successor via NewStationID)
   const list = await cwa('C-B0074-001', 'C-B0074-001');
   /** @type {Map<string, any>} */
-  const meta = new Map();
-  for (const s of list?.records?.data?.stationStatus?.station ?? []) {
-    if (ids.includes(s?.StationID) && s?.status === '現存測站') meta.set(s.StationID, s);
-  }
-  const committed = committedFile;
-  const weeksNow = weekIndex(todayIso) + 1;
-  const stations = [];
-  /** @type {Record<string, any>} */
-  const series = {};
-  const missing = [];
-  let historyFetched = 0, cwaWeeks = 0;
-  for (const id of ids) {
-    const s = meta.get(id);
-    const prev = committed?.series?.[id] ?? null;
-    const lat = Number(s?.StationLatitude ?? prev?.lat), lng = Number(s?.StationLongitude ?? prev?.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      missing.push(id);
-      continue;
+  const all = new Map();
+  for (const s of list?.records?.data?.stationStatus?.station ?? []) if (typeof s?.StationID === 'string') all.set(s.StationID, s);
+  /** Current station for a configured ID (follows NewStationID of revoked stations). @param {string} id */
+  const resolve = (id) => {
+    let cur = id;
+    for (let i = 0; i < 4; i++) {
+      const rec = all.get(cur);
+      if (rec?.status !== '現存測站' && typeof rec?.NewStationID === 'string' && /^[0-9A-Z]{6}$/.test(rec.NewStationID)) cur = rec.NewStationID;
+      else break;
     }
-    // ---- normals (kept from the committed file when the request fails)
-    /** @type {{t:number[], r:number[]}|null} */
-    let normals = prev?.normals ?? null;
+    return all.get(cur)?.status === '現存測站' ? cur : null;
+  };
+  /** @param {string} id */
+  const fetchNormals = async (id) => {
     try {
       const n = await cwa(`C-B0027-001?StationID=${id}`, `C-B0027-001 ${id}`);
       const st = n?.records?.data?.surfaceObs?.location?.[0]?.stationObsStatistics;
       const t = (st?.AirTemperature?.monthly ?? []).map((/** @type {any} */ m) => num(m?.Mean));
       const r = (st?.Precipitation?.monthly ?? []).map((/** @type {any} */ m) => num(m?.Accumulation));
       if (t.length === 12 && r.length === 12 && t.every((/** @type {any} */ v) => v !== null) && r.every((/** @type {any} */ v) => v !== null)) {
-        normals = { t: /** @type {number[]} */ (t), r: /** @type {number[]} */ (r) };
+        return { t: /** @type {number[]} */ (t), r: /** @type {number[]} */ (r) };
       }
-    } catch { /* keep previous */ }
-    if (!normals) {
-      missing.push(id);
+    } catch { /* none */ }
+    return null;
+  };
+  const committed = committedFile;
+  const weeksNow = weekIndex(todayIso) + 1;
+  const stations = [];
+  /** @type {Record<string, any>} */
+  const series = {};
+  /** @type {Record<string, string>} configured ID → live ID */
+  const liveOf = {};
+  const missing = [];
+  let historyFetched = 0, cwaWeeks = 0;
+  for (const cfgId of ids) {
+    const id = resolve(cfgId);
+    if (!id) {
+      missing.push(cfgId);
       continue;
     }
+    if (series[id]) {
+      liveOf[cfgId] = id;
+      continue;
+    }
+    const s = all.get(id);
+    const prev = committed?.series?.[id] ?? null;
+    const lat = Number(s?.StationLatitude ?? prev?.lat), lng = Number(s?.StationLongitude ?? prev?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      missing.push(cfgId);
+      continue;
+    }
+    // ---- normals: the live station, else the configured (predecessor) one, else the committed ones;
+    // stations without CWA normals use the POWER climatology (no bias correction), see below
+    /** @type {{t:number[], r:number[]}|null} */
+    const cwaNormals = (await fetchNormals(id)) ?? (cfgId !== id ? await fetchNormals(cfgId) : null);
+    let normals = cwaNormals ?? prev?.normals ?? null;
+    const normalsFrom = cwaNormals ? 'cwa' : prev?.normals ? String(prev.normalsFrom ?? 'cwa') : 'power';
     // ---- weekly arrays: committed (or POWER history), extended to the current week
     let t = /** @type {(number|null)[]} */ ([...(prev?.t ?? [])]), r = /** @type {(number|null)[]} */ ([...(prev?.r ?? [])]);
     let src = String(prev?.s ?? '');
@@ -227,6 +267,7 @@ export async function buildWeatherSource(ctx, opts) {
         const p = await getJson(fetchImpl, url, {}, log, `POWER ${id}`, 3, backoff);
         const par = p?.properties?.parameter;
         if (!par?.T2M || !par?.PRECTOTCORR) throw new Error('POWER: no T2M/PRECTOTCORR');
+        if (!normals) normals = powerNormals(par.T2M, par.PRECTOTCORR);
         const hw = powerWeeks(par.T2M, par.PRECTOTCORR, normals, weeksNow);
         // keep CWA weeks already recorded; history fills the rest
         const keepC = (/** @type {number} */ w) => src[w] === 'c';
@@ -237,6 +278,10 @@ export async function buildWeatherSource(ctx, opts) {
       } catch (e) {
         log(`[weather] POWER history for ${id} failed: ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+    if (!normals) {
+      missing.push(cfgId);
+      continue;
     }
     while (t.length < weeksNow) t.push(null);
     while (r.length < weeksNow) r.push(null);
@@ -280,15 +325,16 @@ export async function buildWeatherSource(ctx, opts) {
     }
     series[id] = {
       name: String(s?.StationName ?? prev?.name ?? id), lat: roundTo(lat, 4), lng: roundTo(lng, 4),
-      normals: { t: normals.t.map((v) => roundTo(v, 1)), r: normals.r.map((v) => roundTo(v, 1)) },
+      normals: { t: normals.t.map((v) => roundTo(v, 1)), r: normals.r.map((v) => roundTo(v, 1)) }, normalsFrom,
       t, r, s: src,
       daily: { start: isoFromDays(dStart), t: dailyT, r: dailyR },
     };
     stations.push(id);
+    liveOf[cfgId] = id;
   }
   if (!stations.length) throw new Error('no weather station could be built');
   if (missing.length) log(`[weather] stations skipped: ${missing.join(', ')}`);
-  const county = Object.fromEntries(Object.entries(COUNTY_STATION).filter(([, id]) => series[id]));
+  const county = Object.fromEntries(Object.entries(COUNTY_STATION).filter(([, id]) => liveOf[id]).map(([c, id]) => [c, liveOf[id]]));
   const out = { updated: todayIso, week0: WEEK0, weeks: weeksNow, county, series };
   return {
     files: { 'weather.json': toJson(out) },
