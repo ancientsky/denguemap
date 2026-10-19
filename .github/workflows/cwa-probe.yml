@@ -1,0 +1,33 @@
+name: cwa-probe
+
+# One-off: inspect which CWA open-data datasets the CWA secret can read (shapes only, never values of the key).
+on:
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: "Comma-separated API paths (api/v1/rest/datastore/… or historyapi/v1/…); empty = defaults"
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Probe
+        env:
+          CWA_KEY: ${{ secrets.CWA }}
+          PROBE_PATHS: ${{ inputs.paths }}
+        run: node scripts/probe/cwa.mjs
