@@ -86,7 +86,7 @@ export function cleanGeometry(g) {
  * @param {Map<string,string>} countyNameByMoi MOI county code -> 臺 form name
  */
 export function normalizeClusterFeatures(raw, cityCode, countyNameByMoi) {
-  if (raw === null || raw === undefined) return { features: [], dropped: 0 };
+  if (raw === null || raw === undefined) return { features: [], dropped: 0, sampleProps: null };
   const fc = /** @type {any} */ (raw);
   if (typeof fc !== 'object' || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
     throw new Error('cluster: expected a FeatureCollection');
@@ -111,7 +111,11 @@ export function normalizeClusterFeatures(raw, cityCode, countyNameByMoi) {
       properties: { county, town, code1, count, lastOnset },
     });
   }
-  return { features, dropped };
+  const first = fc.features[0]?.properties;
+  const sampleProps = first && typeof first === 'object'
+    ? Object.entries(first).map(([k, v]) => `${cleanLabel(k, 40)}=${cleanLabel(String(v), 40)}`).join(', ').slice(0, 600)
+    : null;
+  return { features, dropped, sampleProps };
 }
 
 /**
@@ -142,6 +146,8 @@ export async function buildClustersSource(ctx, prev, nowIso) {
     return normalizeClusterFeatures(raw, city, countyNameByMoi);
   });
   const features = sortAndDedupe(parts.flatMap((p) => p.features));
+  // Upstream field names were never seen on a non-empty answer before; log them (public cluster attributes).
+  for (const p of parts) if (p.sampleProps) ctx.log(`[clusters] upstream properties: ${p.sampleProps}`);
   const dropped = parts.reduce((a, p) => a + p.dropped, 0);
   // fetchedAt only moves when the content changes, so unchanged data stays byte-identical
   const unchanged = prev && Array.isArray(prev.features) && typeof prev.fetchedAt === 'string' && jsonEqual(prev.features, features);
