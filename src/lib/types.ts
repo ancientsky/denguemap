@@ -153,6 +153,8 @@ export interface Vector {
 export interface ClusterProps {
   county: string;
   town: string;
+  /** Village (里) of the cluster's first-level dissemination area; '' when upstream gives none. */
+  village: string;
   code1: string;
   count: number;
   lastOnset: string;

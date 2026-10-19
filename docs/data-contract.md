@@ -143,9 +143,12 @@ TopoJSON，object `villages`：只含 vector.json 中 `villCode` 非 null 的村
 ```jsonc
 { "type": "FeatureCollection", "fetchedAt": "…", "features": [
   { "type": "Feature", "geometry": { /* Polygon/MultiPolygon，座標 5 位小數 */ },
-    "properties": { "county": "臺南市", "town": "東區", "code1": "A6701-…", "count": 3, "lastOnset": "2026-08-01" } } ] }
+    "properties": { "county": "屏東縣", "town": "屏東市", "village": "長安里", "code1": "A1301-59-004", "count": 2, "lastOnset": "2026-10-09" } } ] }
 ```
 只保留上列 properties（白名單）。
+
+- 上游（`GetDengueCluster_New`）實際欄位為 `CODE1`、`COUNTY`、`TOWN`、`VILLAGE`、`COUNT`、`lon`、`lat`（2026-10-19 第一次取得非空資料時確認），**沒有發病日**。
+- `lastOnset` 由本站病例資料推得：近 60 天本土病例中，座標（最小統計區中心點）落在該多邊形內的最近發病日；找不到時為 `null`。
 
 ## ns1.json
 

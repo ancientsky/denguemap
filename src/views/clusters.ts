@@ -77,11 +77,12 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
     return getLang() === 'en' ? `${placeName(town)}, ${placeName(county)}` : `${placeName(county)}${placeName(town)}`;
   };
   /** Cluster props are Chinese names from CDC; map to English via the admin lookup when possible. */
-  const clusterLabel = (county: string, town: string): string => {
-    if (getLang() !== 'en' || !admin) return `${county}${town}`;
+  const clusterLabel = (county: string, town: string, village = ''): string => {
+    if (getLang() !== 'en' || !admin) return `${county}${town}${village}`;
     const c = admin.countyByZh.get(county);
     const tw = c ? [...admin.towns.values()].find((x) => x.county === c.code && x.zh === town.replace(/台/g, '臺')) : undefined;
-    return tw && c ? `${tw.en}, ${c.en}` : `${county}${town}`;
+    // Village names have no official English form here: keep the Chinese name in brackets.
+    return tw && c ? `${tw.en}, ${c.en}${village ? ` (${village})` : ''}` : `${county}${town}${village}`;
   };
 
   const clusters = clRes.status === 'fulfilled' ? clRes.value : null;
@@ -107,7 +108,7 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
     clusters.features.forEach((f, i) => {
       const p = f.properties;
       list.append(h('li', null, h('button', { type: 'button', class: 'card-btn', 'aria-pressed': 'false', on: { click: () => select(i) } },
-        h('span', { class: 'card-title' }, h('span', null, clusterLabel(p.county, p.town)), h('span', { class: 'badge' }, t('clusters.cases', { n: fmtNum(p.count) }))),
+        h('span', { class: 'card-title' }, h('span', null, clusterLabel(p.county, p.town, p.village)), h('span', { class: 'badge' }, t('clusters.cases', { n: fmtNum(p.count) }))),
         h('span', { class: 'card-meta' }, p.lastOnset ? h('span', null, t('clusters.lastOnset', { date: fmtDate(p.lastOnset) })) : null, p.code1 ? h('span', null, p.code1) : null))));
     });
     pnl.body.append(section(t('clusters.count', { n: fmtNum(clusters.features.length) }), list));
@@ -151,7 +152,7 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
         const c = clusters.features[idx];
         if (!c) return;
         const p = c.properties;
-        host.showPopup(e.lngLat, h('div', { class: 'pop' }, h('p', { class: 'pop-kicker' }, icon('clusters'), t('clusters.title')), h('p', { class: 'pop-title' }, clusterLabel(p.county, p.town)),
+        host.showPopup(e.lngLat, h('div', { class: 'pop' }, h('p', { class: 'pop-kicker' }, icon('clusters'), t('clusters.title')), h('p', { class: 'pop-title' }, clusterLabel(p.county, p.town, p.village)),
           h('dl', { class: 'pop-dl' }, h('dt', null, t('common.caseCount')), h('dd', null, h('span', { class: 'pill local' }, fmtNum(p.count))),
             p.lastOnset ? h('dt', null, t('kpi.latestOnset')) : null, p.lastOnset ? h('dd', null, fmtDate(p.lastOnset)) : null,
             p.code1 ? h('dt', null, 'ID') : null, p.code1 ? h('dd', null, p.code1) : null)), hover);

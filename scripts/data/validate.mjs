@@ -201,8 +201,10 @@ export function validateFileShape(path, text) {
     for (const f of j.features) {
       if (!['Polygon', 'MultiPolygon'].includes(f.geometry?.type)) err('bad geometry');
       const p = f.properties;
-      if (typeof p?.county !== 'string' || typeof p.town !== 'string' || typeof p.code1 !== 'string' || !isInt(p.count)) err('bad properties');
-      if (Object.keys(p).length !== 5) err('unexpected properties');
+      if (typeof p?.county !== 'string' || typeof p.town !== 'string' || typeof p.village !== 'string' || typeof p.code1 !== 'string' || !isInt(p.count)) err('bad properties');
+      if (p.lastOnset !== null && !isDate(p.lastOnset)) err('bad lastOnset');
+      const allowed = ['county', 'town', 'village', 'code1', 'count', 'lastOnset'];
+      if (Object.keys(p).some((k) => !allowed.includes(k)) || Object.keys(p).length !== allowed.length) err('unexpected properties');
     }
   } else if (path === 'vector.json') {
     if (!isDate(j.updated) || !Array.isArray(j.weeks) || j.weeks.length !== 5) err('bad header');

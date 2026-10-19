@@ -68,7 +68,7 @@ describe('pipeline end to end (mock backend)', () => {
     expect(c.pts.length).toBeGreaterThan(0);
     const clusters = await read('clusters.json');
     expect(clusters.features).toHaveLength(1);
-    expect(clusters.features[0].properties).toEqual({ county: '桃園市', town: '桃園區', code1: 'A6801-57-009', count: 2, lastOnset: '2020-07-21' });
+    expect(clusters.features[0].properties).toEqual({ county: '桃園市', town: '桃園區', village: '', code1: 'A6801-57-009', count: 2, lastOnset: '2020-07-21' });
     const notices = await read('notices.json');
     expect(Object.keys(notices)).toEqual(['vn']);
     const vec = await read('vector.json');

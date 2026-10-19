@@ -6,7 +6,7 @@
  */
 import { BBOX, CDC_TO_MOI, CLUSTER_CITY_CODES, CONCURRENCY } from '../config.mjs';
 import {
-  cleanLabel, cmp, jsonEqual, mapLimit, normTai, parseYmd, round5, toJson, ymd,
+  cleanLabel, cmp, daysFromIso, daysFromYmd, isoFromDays, jsonEqual, mapLimit, normTai, parseYmd, round5, toJson, ymd,
 } from '../util.mjs';
 
 const MAX_VERTICES = 20000;
@@ -104,11 +104,12 @@ export function normalizeClusterFeatures(raw, cityCode, countyNameByMoi) {
     const count = Number.isFinite(countRaw) ? Math.max(0, Math.min(100000, Math.round(countRaw))) : 0;
     const county = normTai(cleanLabel(String(pick(props, ['COUNTY']) ?? ''), 20)) || fallbackCounty;
     const town = normTai(cleanLabel(String(pick(props, ['TOWN']) ?? ''), 20));
+    const village = normTai(cleanLabel(String(pick(props, ['VILLAGE']) ?? ''), 20));
     const lastOnset = normalizeClusterDate(pick(props, ['sick_date_last', 'sick_date']));
     features.push({
       type: 'Feature',
       geometry,
-      properties: { county, town, code1, count, lastOnset },
+      properties: { county, town, village, code1, count, lastOnset },
     });
   }
   const first = fc.features[0]?.properties;
@@ -134,18 +135,70 @@ export function sortAndDedupe(features) {
   return out;
 }
 
+/** Ray casting on one ring of [lng, lat]. @param {number[][]} ring @param {number} x @param {number} y */
+function inRing(ring, x, y) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Point in a cleaned Polygon / MultiPolygon (holes excluded). @param {any} g @param {number} x @param {number} y */
+export function inGeometry(g, x, y) {
+  const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+  return polys.some((/** @type {number[][][]} */ poly) => inRing(poly[0], x, y) && !poly.slice(1).some((hole) => inRing(hole, x, y)));
+}
+
+/**
+ * Local cases of the last `days` days as points with an onset date, from cases/{year}.json contents.
+ * @param {any[]} files cases files (current and previous year) @param {string} todayIso @param {number} [days]
+ */
+export function recentLocalPoints(files, todayIso, days = 60) {
+  const from = daysFromIso(todayIso) - days;
+  /** @type {{lng:number, lat:number, date:string}[]} */
+  const out = [];
+  for (const f of files) {
+    if (!f || !Array.isArray(f.c) || !Array.isArray(f.pts)) continue;
+    const base = daysFromYmd(f.year, 1, 1) - 1;
+    for (const [doy, p, imp] of f.c) {
+      const d = base + doy;
+      const pt = f.pts[p];
+      if (imp || d < from || !pt) continue;
+      out.push({ lng: pt[0], lat: pt[1], date: isoFromDays(d) });
+    }
+  }
+  return out;
+}
+
+/**
+ * The upstream polygons carry no onset date: take the latest onset of this site's local cases inside the polygon.
+ * @param {any[]} features @param {{lng:number, lat:number, date:string}[]} points
+ */
+export function deriveLastOnset(features, points) {
+  for (const f of features) {
+    if (f.properties.lastOnset) continue;
+    let last = null;
+    for (const p of points) if ((!last || p.date > last) && inGeometry(f.geometry, p.lng, p.lat)) last = p.date;
+    f.properties.lastOnset = last;
+  }
+  return features;
+}
+
 /**
  * @param {import('../run.mjs').Ctx} ctx
  * @param {{features:any[], fetchedAt:string}|null} prev previous clusters.json (to keep fetchedAt stable)
  * @param {string} nowIso
+ * @param {{lng:number, lat:number, date:string}[]} [recentPoints] local cases of the last 60 days (for lastOnset)
  */
-export async function buildClustersSource(ctx, prev, nowIso) {
+export async function buildClustersSource(ctx, prev, nowIso, recentPoints = []) {
   const countyNameByMoi = new Map(ctx.geo.counties.map((c) => [c.code, c.zh]));
   const parts = await mapLimit([...CLUSTER_CITY_CODES], CONCURRENCY, async (city) => {
     const raw = await ctx.http.asmx('GetDengueCluster_New', { citycode: city });
     return normalizeClusterFeatures(raw, city, countyNameByMoi);
   });
-  const features = sortAndDedupe(parts.flatMap((p) => p.features));
+  const features = deriveLastOnset(sortAndDedupe(parts.flatMap((p) => p.features)), recentPoints);
   // Upstream field names were never seen on a non-empty answer before; log them (public cluster attributes).
   for (const p of parts) if (p.sampleProps) ctx.log(`[clusters] upstream properties: ${p.sampleProps}`);
   const dropped = parts.reduce((a, p) => a + p.dropped, 0);

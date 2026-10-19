@@ -110,13 +110,13 @@ describe('clusters', () => {
   it('whitelists properties and derives missing fields from the inline sample', () => {
     const { features } = normalizeClusterFeatures({ type: 'FeatureCollection', features: [CLUSTER_FEATURE] }, '32', names);
     expect(features).toHaveLength(1);
-    expect(features[0].properties).toEqual({ county: '桃園市', town: '桃園區', code1: 'A6801-57-009', count: 2, lastOnset: '2020-07-21' });
+    expect(features[0].properties).toEqual({ county: '桃園市', town: '桃園區', village: '', code1: 'A6801-57-009', count: 2, lastOnset: '2020-07-21' });
     expect(features[0].geometry.coordinates[0][0]).toEqual([121.30268, 25.00339]);
   });
   it('prefers COUNT / sick_date_last when present and normalises 台', () => {
     const f = { ...CLUSTER_FEATURE, properties: { CODE1: 'A', COUNTY: '台南市', TOWN: '東區', COUNT: 3, ttl_determined_cnt: 9, sick_date: '20200101', sick_date_last: '20200801' } };
     const { features } = normalizeClusterFeatures({ type: 'FeatureCollection', features: [f] }, '05', names);
-    expect(features[0].properties).toEqual({ county: '臺南市', town: '東區', code1: 'A', count: 3, lastOnset: '2020-08-01' });
+    expect(features[0].properties).toEqual({ county: '臺南市', town: '東區', village: '', code1: 'A', count: 3, lastOnset: '2020-08-01' });
   });
   it('drops features with bad geometry or no code', () => {
     const bad = [
@@ -230,5 +230,27 @@ describe('ns1', () => {
     expect(r.hospitals[0][6]).toBe('10014');
     expect(r.unmappedCodes).toEqual({ 99: 1 });
     expect(normalizeNs1(one({ code: '99', hospAddress: '某地' }), byName).hospitals[0][6]).toBeNull();
+  });
+});
+
+describe('clusters: real upstream shape (2026-10-19) and derived lastOnset', async () => {
+  const { normalizeClusterFeatures, deriveLastOnset, recentLocalPoints, inGeometry } = await import('../../scripts/data/sources/clusters.mjs');
+  const ring = [[120.470, 22.668], [120.474, 22.668], [120.474, 22.671], [120.470, 22.671], [120.470, 22.668]];
+  const raw = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] },
+    properties: { CODE1: 'A1301-59-004', COUNTY: '屏東縣', TOWN: '屏東市', VILLAGE: '長安里', COUNT: 2, lon: 120.4719, lat: 22.6688 } }] };
+
+  it('keeps the village; there is no onset date upstream', () => {
+    const { features } = normalizeClusterFeatures(raw, '43', new Map());
+    expect(features[0].properties).toEqual({ county: '屏東縣', town: '屏東市', village: '長安里', code1: 'A1301-59-004', count: 2, lastOnset: null });
+  });
+  it('takes lastOnset from local cases inside the polygon (imported and outside cases ignored)', () => {
+    const { features } = normalizeClusterFeatures(raw, '43', new Map());
+    const files = [{ year: 2026, pts: [[120.47177, 22.66924, '10013010'], [120.48, 22.68, '10013010']],
+      c: [[278, 0, 0, 1], [282, 0, 0, 1], [285, 0, 1, 1], [290, 1, 0, 1]] }];
+    const pts = recentLocalPoints(files, '2026-10-19');
+    expect(pts.map((p) => p.date)).toEqual(['2026-10-05', '2026-10-09', '2026-10-17']);
+    expect(deriveLastOnset(features, pts)[0].properties.lastOnset).toBe('2026-10-09');
+    expect(inGeometry({ type: 'MultiPolygon', coordinates: [[ring]] }, 120.472, 22.669)).toBe(true);
+    expect(inGeometry({ type: 'Polygon', coordinates: [ring, [[120.471, 22.6685], [120.473, 22.6685], [120.473, 22.6700], [120.471, 22.6700], [120.471, 22.6685]]] }, 120.472, 22.669)).toBe(false);
   });
 });

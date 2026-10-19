@@ -24,7 +24,7 @@ import { PROBE_DELAY_MS, probeUpstream, renderProbe } from './diagnostics.mjs';
 import { loadGeo } from './geo.mjs';
 import { createHttp } from './http.mjs';
 import { buildCases, yearTotals } from './sources/cases.mjs';
-import { buildClustersSource } from './sources/clusters.mjs';
+import { buildClustersSource, recentLocalPoints } from './sources/clusters.mjs';
 import { buildImportedSource } from './sources/imported.mjs';
 import { buildNs1Source } from './sources/ns1.mjs';
 import { buildNoticesSource, recentCountriesFromImportedJson } from './sources/notices.mjs';
@@ -164,8 +164,16 @@ export async function run(options = {}) {
     return buildNoticesSource(ctx, countries, await readJson(outDir, 'notices.json'));
   }) : null;
 
-  const clustersP = wanted('clusters') ? guarded('clusters', async (ctx) =>
-    buildClustersSource(ctx, await readJson(outDir, 'clusters.json'), isoUtc(now))) : null;
+  const clustersP = wanted('clusters') ? guarded('clusters', async (ctx) => {
+    // lastOnset comes from this run's case files (the committed ones when cases failed)
+    const cs = casesP ? await casesP : null;
+    const files = [];
+    for (const y of [currentYear - 1, currentYear]) {
+      const text = cs?.ok ? cs.files?.[`cases/${y}.json`] : undefined;
+      files.push(text ? JSON.parse(text) : await readJson(outDir, `cases/${y}.json`));
+    }
+    return buildClustersSource(ctx, await readJson(outDir, 'clusters.json'), isoUtc(now), recentLocalPoints(files, ctx.todayIso));
+  }) : null;
 
   const vectorP = wanted('vector') ? guarded('vector', async (ctx) => {
     const out = await buildVectorSource(ctx);

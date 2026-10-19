@@ -314,7 +314,7 @@ export function validateClusters(v: unknown): Clusters {
     if (!geometry) continue;
     const p = f.properties;
     features.push({ type: 'Feature', geometry, properties: {
-      county: str(p.county, 20) ?? '', town: str(p.town, 20) ?? '', code1: str(p.code1, 40) ?? '',
+      county: str(p.county, 20) ?? '', town: str(p.town, 20) ?? '', village: str(p.village, 20) ?? '', code1: str(p.code1, 40) ?? '',
       count: nonNeg(p.count), lastOnset: isISODate(p.lastOnset) ? p.lastOnset : '',
     } });
   }
