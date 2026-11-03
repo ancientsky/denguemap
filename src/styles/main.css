@@ -356,6 +356,8 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 :root[data-theme="dark"] .seg-input:checked + .seg-face { background: var(--surface-3); }
 .seg-input:focus-visible + .seg-face { outline: 2.5px solid var(--focus); outline-offset: 1px; }
 .swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--sw); flex: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sw) 25%, transparent); }
+/* imported cases drawn as rings on the map (points + recency colouring) */
+.swatch.swatch-ring { box-sizing: border-box; width: 11px; height: 11px; background: transparent; border: 2.5px solid var(--sw); box-shadow: none; }
 
 .switch { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14.5px; font-weight: 550; position: relative; }
 .switch-input { position: absolute; opacity: 0; width: 38px; height: 22px; margin: 0; cursor: pointer; z-index: 1; }

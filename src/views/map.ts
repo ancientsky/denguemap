@@ -464,6 +464,11 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     refreshHistogram();
     commit();
   });
+  // The case-type swatches follow the map: imported cases are rings in points + recency mode, filled dots otherwise.
+  const syncTypeSwatches = () => {
+    const ring = st.mode === 'points' && st.color === 'recency';
+    typeSeg.querySelector<HTMLElement>('input[value="imported"] + .seg-face .swatch')?.classList.toggle('swatch-ring', ring);
+  };
   const modeSeg = segmented<MapMode>(t('map.mode'), [
     { value: 'points', label: t('map.mode.points') },
     { value: 'heat', label: t('map.mode.heat') },
@@ -471,6 +476,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   ], st.mode, (v) => {
     st = { ...st, mode: v };
     overlay?.setMode(v);
+    syncTypeSwatches();
     renderLegend();
     renderBadge();
     commit();
@@ -481,10 +487,12 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   ], st.color, (v) => {
     st = { ...st, color: v };
     overlay?.setColorMode(v);
+    syncTypeSwatches();
     renderLegend();
     renderBadge();
     commit();
   });
+  syncTypeSwatches();
   const mvNote = h('div', { class: 'hint' });
   const mvToggle = toggle(t('map.vector'), st.mv, (on) => {
     st = { ...st, mv: on };
