@@ -281,6 +281,10 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 由 `scripts/alerts/build.mjs` 在**建置時**從 `content/alerts/*.json` 產生（不是資料管線寫的、不進 git、不列在 manifest），
 前端以 `cache: 'no-cache'` 讀取。格式與編輯流程見 [`docs/alerts.md`](alerts.md)。
 
+- `alerts.json`：生效中與結束 7 天內的公告（全文，格式如下）。
+- `alerts-index.json`：所有公告的摘要 `{ generatedAt, alerts: [{ id, title, titleEn, county, town, countyZh, countyEn, townZh, townEn, issuedAt, validUntil, issuer, villages: 數量, stations: 數量 }] }`。
+- `alerts/<id>.json`：單則公告全文（同下方 `alerts[]` 的元素），歷史查詢點選時載入；前端先檢查 id 格式才請求。
+
 ```jsonc
 { "generatedAt": "2026-11-03",
   "alerts": [{ "id", "title", "titleEn", "county", "town", "countyZh", "countyEn", "townZh", "townEn",

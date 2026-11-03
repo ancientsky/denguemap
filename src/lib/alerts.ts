@@ -213,3 +213,66 @@ export function loadAlerts(): Promise<AlertsFile | null> {
 export async function loadActiveAlerts(): Promise<DengueAlert[]> {
   return activeAlerts(await loadAlerts(), todayTaipei());
 }
+
+// ------------------------------------------------------------------ history
+export interface AlertIndexEntry {
+  id: string;
+  title: string;
+  titleEn: string;
+  county: string;
+  town: string;
+  countyZh: string;
+  countyEn: string;
+  townZh: string;
+  townEn: string;
+  issuedAt: string;
+  validUntil: string;
+  issuer: string;
+  villages: number;
+  stations: number;
+}
+
+const ID_RE = /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*$/;
+export const isAlertId = (s: unknown): s is string => typeof s === 'string' && s.length <= 80 && ID_RE.test(s);
+
+/** Shape check of alerts-index.json; malformed entries are dropped. Newest first. */
+export function validateAlertIndex(v: unknown): AlertIndexEntry[] {
+  const j = v as { alerts?: unknown };
+  if (!j || typeof j !== 'object' || !Array.isArray(j.alerts)) throw new Error('alerts-index: bad file');
+  const out: AlertIndexEntry[] = [];
+  for (const e of j.alerts as Record<string, unknown>[]) {
+    if (!e || !isAlertId(e.id) || !str(e.title, 60) || !str(e.issuer, 40) || !isISODate(e.issuedAt) || !isISODate(e.validUntil)) continue;
+    if (typeof e.county !== 'string' || !/^\d{5}$/.test(e.county) || typeof e.town !== 'string' || !/^\d{8}$/.test(e.town)) continue;
+    out.push({
+      id: e.id, title: e.title as string, titleEn: str(e.titleEn, 120) ?? '', county: e.county, town: e.town,
+      countyZh: str(e.countyZh, 20) ?? '', countyEn: str(e.countyEn, 60) ?? '', townZh: str(e.townZh, 20) ?? '', townEn: str(e.townEn, 60) ?? '',
+      issuedAt: e.issuedAt as string, validUntil: e.validUntil as string, issuer: e.issuer as string,
+      villages: num(e.villages) ?? 0, stations: num(e.stations) ?? 0,
+    });
+  }
+  return out.sort((a, b) => (a.issuedAt < b.issuedAt ? 1 : a.issuedAt > b.issuedAt ? -1 : a.id.localeCompare(b.id)));
+}
+
+const noCache = (url: string) => fetch(url, { credentials: 'same-origin', mode: 'same-origin', cache: 'no-cache' })
+  .then(async (r) => (r.ok && /json/.test(r.headers.get('content-type') ?? '') ? r.json() : null))
+  .catch(() => null);
+
+let indexP: Promise<AlertIndexEntry[] | null> | null = null;
+/** Every notice ever published (summary), for the history search; null when unavailable. */
+export function loadAlertIndex(): Promise<AlertIndexEntry[] | null> {
+  indexP ??= noCache(`${import.meta.env.BASE_URL}data/alerts-index.json`).then((v) => {
+    const out = v ? (() => { try { return validateAlertIndex(v); } catch { return null; } })() : null;
+    if (!out) indexP = null;
+    return out;
+  });
+  return indexP;
+}
+
+/** One notice in full by id (current or past); null when unknown or malformed. */
+export async function loadAlertById(id: string): Promise<DengueAlert | null> {
+  if (!isAlertId(id)) return null;
+  const v = await noCache(`${import.meta.env.BASE_URL}data/alerts/${id}.json`);
+  if (!v) return null;
+  const a = validateAlerts({ alerts: [v] }).alerts[0];
+  return a?.id === id ? a : null;
+}

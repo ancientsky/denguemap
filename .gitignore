@@ -9,3 +9,5 @@ playwright-report/
 .env*
 .fixtures/
 public/data/alerts.json
+public/data/alerts-index.json
+public/data/alerts/

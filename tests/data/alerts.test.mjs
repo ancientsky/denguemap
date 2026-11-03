@@ -66,8 +66,15 @@ describe('alerts: publish and build', () => {
     let out = await buildAlerts({ root, today: '2026-11-20' });
     expect(out.alerts).toHaveLength(1);
     expect(JSON.parse(await readFile(join(root, 'public/data/alerts.json'), 'utf8')).alerts[0].id).toBe(REAL.id);
-    out = await buildAlerts({ root, today: '2026-12-01', check: true });
-    expect(out.alerts).toHaveLength(0); // validUntil 11-16 + 7 days < 12-01
+    out = await buildAlerts({ root, today: '2026-12-01' });
+    expect(out.alerts).toHaveLength(0); // validUntil 11-16 + 7 days < 12-01: no longer "current"…
+    // …but still in the history: summary in the index, full notice in its own file
+    const index = JSON.parse(await readFile(join(root, 'public/data/alerts-index.json'), 'utf8'));
+    expect(index.alerts.map((e) => e.id)).toEqual([REAL.id]);
+    expect(index.alerts[0]).toMatchObject({ townZh: '小港區', villages: 8, stations: 2 });
+    expect(index.alerts[0].area).toBeUndefined();
+    const full = JSON.parse(await readFile(join(root, `public/data/alerts/${REAL.id}.json`), 'utf8'));
+    expect(full.area.features).toHaveLength(8);
     await writeFile(join(root, 'content/alerts/2026-11-05-bad.json'), JSON.stringify({ ...REAL, id: 'wrong' }));
     await expect(buildAlerts({ root, today: '2026-11-20', check: true })).rejects.toThrow(/防疫公告驗證失敗/);
   });

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildAlerts } from '../../scripts/alerts/build.mjs';
-import { activeAlerts, alertBBox, locateInAlerts, stationIcs, stationStatus, validateAlerts } from '../../src/lib/alerts';
+import { activeAlerts, alertBBox, isAlertId, locateInAlerts, stationIcs, stationStatus, validateAlertIndex, validateAlerts } from '../../src/lib/alerts';
 
 // What the build publishes from content/alerts (built here: tests run before `npm run build`), parsed by the page.
-const file = validateAlerts(JSON.parse(JSON.stringify(await buildAlerts({ today: '2026-11-03', check: true }))));
+const built = JSON.parse(JSON.stringify(await buildAlerts({ today: '2026-11-03', check: true })));
+const file = validateAlerts(built);
 const a = file.alerts.find((x) => x.id === '2026-11-02-kaohsiung-xiaogang');
 
 describe('alerts', () => {
@@ -51,5 +52,13 @@ describe('alerts', () => {
     expect(ics).toContain('DTEND:20261104T083000Z'); // 16:30 Taipei
     expect(ics).toContain('DESCRIPTION:公告\\, 說明\\; 第二行\\n');
     expect(ics.endsWith('END:VCALENDAR\r\n')).toBe(true);
+  });
+  it('history index: shape check, newest first; ids are checked before any fetch', () => {
+    const older = { ...built.index.alerts[0], id: '2025-08-01-tainan-east', issuedAt: '2025-08-01', validUntil: '2025-08-15' };
+    const idx = validateAlertIndex({ alerts: [older, built.index.alerts[0], { ...older, id: '../x' }, { ...older, county: 'x' }] });
+    expect(idx.map((e) => e.id)).toEqual(['2026-11-02-kaohsiung-xiaogang', '2025-08-01-tainan-east']);
+    expect(isAlertId('2026-11-02-kaohsiung-xiaogang')).toBe(true);
+    expect(isAlertId('../../manifest')).toBe(false);
+    expect(isAlertId('2026-11-02-x/../../y')).toBe(false);
   });
 });

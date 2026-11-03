@@ -1199,6 +1199,19 @@ try {
         await viewReady(page, 'clusters');
         if (!(await page.isVisible('.al-section .al-card-btn'))) failures.push('[alerts] clusters page has no notice');
         await page.screenshot({ path: join(OUT, 'alerts-clusters.png') });
+        // history: the list loads when opened; picking a notice shows it and puts it in the URL (shareable)
+        await page.click('.al-hist summary');
+        await page.waitForSelector('.al-hist-item', { timeout: 10000 });
+        const id = await page.getAttribute('.al-hist-item', 'data-id');
+        await page.click('.al-hist-item');
+        await page.waitForSelector('dialog.al-dialog[open]', { timeout: 10000 }).catch(() => failures.push('[alerts] history pick did not open the notice'));
+        if (!page.url().includes(`notice=${id}`)) failures.push(`[alerts] picked notice not in the URL: ${page.url()}`);
+        await page.keyboard.press('Escape');
+        // the shared link opens the notice by itself
+        await page.goto(`${BASE}#/about`);
+        await page.goto(`${BASE}#/clusters?notice=${id}`);
+        await page.waitForSelector('dialog.al-dialog[open]', { timeout: 15000 }).catch(() => failures.push('[alerts] shared notice link did not open the notice'));
+        await page.screenshot({ path: join(OUT, 'alerts-history.png') });
       } catch (e) {
         failures.push(`[alerts] ${e.message}`);
       }

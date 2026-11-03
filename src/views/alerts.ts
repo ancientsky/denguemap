@@ -4,11 +4,14 @@
 // directions, calendar files and the on-device "am I inside a warning area?" check. Text is set with textContent only.
 import type { Map as MLMap, MapLayerMouseEvent } from 'maplibre-gl';
 import { fmtDate, getLang } from '../i18n';
-import { alertBBox, locateInAlerts, stationIcs, stationStatus, type DengueAlert, type ScreeningStation } from '../lib/alerts';
+import {
+  alertBBox, loadAlertIndex, locateInAlerts, stationIcs, stationStatus,
+  type AlertIndexEntry, type DengueAlert, type ScreeningStation,
+} from '../lib/alerts';
 import { downloadBlob } from '../lib/csv';
 import { todayTaipei } from '../lib/dates';
 import { directionsUrl } from '../lib/directions';
-import { extLink, h } from '../lib/dom';
+import { clear, extLink, h, nextId } from '../lib/dom';
 import { icon } from '../lib/icons';
 import type { MapHost, Overlay, OverlayCtx } from '../map/host';
 import { addAlertIcons } from '../map/images';
@@ -55,6 +58,13 @@ export class AlertLayers {
       a.screeningStations.forEach((s, j) => s.lng !== null && s.lat !== null && out.push({
         type: 'Feature', properties: { kind: 'station', i, j, past: stationStatus(s, today) === 'past' ? 1 : 0 }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } }));
     });
+    // Places sharing a spot (e.g. a market that is both visited and a test station): spread the icons sideways.
+    const groups = new Map<string, GeoJSON.Feature[]>();
+    for (const f of out) {
+      const k = (f.geometry as GeoJSON.Point).coordinates.join(',');
+      groups.set(k, [...(groups.get(k) ?? []), f]);
+    }
+    for (const g of groups.values()) g.forEach((f, k) => (f.properties!.off = [(k - (g.length - 1) / 2) * 20, 0]));
     return { type: 'FeatureCollection', features: out };
   }
   private meFC(): GeoJSON.FeatureCollection {
@@ -77,7 +87,7 @@ export class AlertLayers {
     map.addSource(S.places, { type: 'geojson', data: this.placesFC() });
     map.addLayer({ id: L.places, type: 'symbol', source: S.places, layout: {
       'icon-image': ['match', ['get', 'kind'], 'station', ICON_STATION, ICON_SITE], 'icon-allow-overlap': true, 'icon-ignore-placement': true,
-      'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.8, 15, 1.1] }, paint: { 'icon-opacity': ['case', ['==', ['get', 'past'], 1], 0.45, 1] } });
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.8, 15, 1.1], 'icon-offset': ['get', 'off'] }, paint: { 'icon-opacity': ['case', ['==', ['get', 'past'], 1], 0.45, 1] } });
     map.addSource(S.me, { type: 'geojson', data: this.meFC() });
     map.addLayer({ id: L.meHalo, type: 'circle', source: S.me, paint: { 'circle-radius': 14, 'circle-color': p.accent, 'circle-opacity': 0.2 } });
     map.addLayer({ id: L.me, type: 'circle', source: S.me, paint: { 'circle-radius': 6, 'circle-color': p.accent, 'circle-stroke-color': p.halo, 'circle-stroke-width': 2.5 } });
@@ -158,8 +168,9 @@ function stationBlock(a: DengueAlert, s: ScreeningStation, withCalendar: boolean
 export function alertCard(a: DengueAlert, onShow: ((a: DengueAlert) => void) | null): HTMLElement {
   const today = todayTaipei();
   const note = getLang() === 'en' ? a.noteEn : a.note;
-  return h('article', { class: 'al-card' },
-    h('h3', { class: 'al-title' }, icon('alert'), h('span', null, titleOf(a))),
+  const ended = today > a.validUntil;
+  return h('article', { class: `al-card${ended ? ' is-ended' : ''}` },
+    h('h3', { class: 'al-title' }, icon('alert'), h('span', null, titleOf(a)), ended ? h('span', { class: 'al-badge al-past' }, at('statusEnded')) : null),
     h('p', { class: 'al-meta' }, `${at('issued', { issuer: a.issuer, date: fmtDate(a.issuedAt) })}・${at('validUntil', { date: fmtDate(a.validUntil) })}`),
     h('section', { class: 'al-sec' }, h('h4', null, at('area')), h('p', null, `${areaName(a)}：${a.villages.map(villageName).join(getLang() === 'en' ? ', ' : '、')}`)),
     a.exposureSites.length ? h('section', { class: 'al-sec' }, h('h4', null, at('sites')), ...a.exposureSites.map((s) => h('div', { class: 'al-place' },
@@ -204,13 +215,18 @@ function locationCheck(alerts: DengueAlert[], onLocated: ((pt: [number, number])
 /** Modal dialog with every notice in force (the chosen one first) and the location check. */
 export function openAlertDialog(alerts: DengueAlert[], first: DengueAlert | null, opts: { onShow: ((a: DengueAlert) => void) | null; onLocated: ((pt: [number, number]) => void) | null }): void {
   const ordered = first ? [first, ...alerts.filter((a) => a !== first)] : alerts;
+  // The location check is about notices in force; a past notice opened from the history has none.
+  const today = todayTaipei();
+  const inForce = alerts.filter((a) => a.issuedAt <= today && today <= a.validUntil);
   const dlg = h('dialog', { class: 'al-dialog', 'aria-labelledby': 'al-dialog-title' });
   const close = () => dlg.close();
   const show = opts.onShow ? (a: DengueAlert) => { close(); opts.onShow!(a); } : null;
   dlg.append(
     h('header', { class: 'al-dialog-head' }, h('h2', { id: 'al-dialog-title' }, at('dialogTitle')),
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': at('close'), title: at('close'), on: { click: close } }, icon('close'))),
-    h('div', { class: 'al-dialog-body' }, locationCheck(alerts, opts.onLocated ? (pt) => opts.onLocated!(pt) : null), ...ordered.map((a) => alertCard(a, show))));
+    h('div', { class: 'al-dialog-body' },
+      inForce.length ? locationCheck(inForce, opts.onLocated ? (pt) => opts.onLocated!(pt) : null) : null,
+      ...ordered.map((a) => alertCard(a, show))));
   dlg.addEventListener('close', () => dlg.remove());
   dlg.addEventListener('click', (e) => {
     if (e.target === dlg) close(); // backdrop
@@ -234,6 +250,71 @@ export function alertSection(alerts: DengueAlert[], onOpen: (a: DengueAlert) => 
       h('span', { class: 'card-title' }, h('span', null, titleOf(a)), a.screeningStations.some((s) => stationStatus(s, today) === 'today') ? h('span', { class: 'al-badge al-today' }, at('stationToday')) : null),
       h('span', { class: 'card-meta' }, h('span', null, at('cardMeta', { date: short(a.issuedAt), n: a.villages.length })), h('span', null, a.issuer)))))),
     h('p', { class: 'hint' }, at('sectionNote')));
+}
+
+/**
+ * History search: every notice ever published, filtered by county and year; the list loads when the section is
+ * first opened (user action: no request and no layout shift on page load).
+ */
+export function alertHistory(onPick: (id: string) => void, selected: string | null = null): HTMLElement {
+  const body = h('div', { class: 'al-hist-body' });
+  const det = h('details', { class: 'table-details al-hist' }, h('summary', null, at('histTitle')), body);
+  if (selected) det.open = true;
+  let loaded = false;
+  const load = async () => {
+    if (loaded) return;
+    loaded = true;
+    body.replaceChildren(h('p', { class: 'hint' }, at('histLoading')));
+    const index = await loadAlertIndex();
+    if (!index) {
+      loaded = false;
+      body.replaceChildren(h('p', { class: 'hint' }, at('histError')));
+      return;
+    }
+    renderList(index);
+  };
+  const renderList = (index: AlertIndexEntry[]) => {
+    const today = todayTaipei();
+    const en = getLang() === 'en';
+    let county = '', year = '';
+    const counties = [...new Map(index.map((e) => [e.county, en ? e.countyEn || e.countyZh : e.countyZh])).entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const years = [...new Set(index.map((e) => e.issuedAt.slice(0, 4)))].sort().reverse();
+    const list = h('ul', { class: 'list-cards' });
+    const count = h('p', { class: 'hint', role: 'status' });
+    const draw = () => {
+      const rows = index.filter((e) => (!county || e.county === county) && (!year || e.issuedAt.startsWith(year)));
+      count.textContent = at('histCount', { n: rows.length });
+      clear(list);
+      if (!rows.length) list.append(h('li', { class: 'empty' }, at('histEmpty')));
+      for (const e of rows) {
+        const active = e.issuedAt <= today && today <= e.validUntil;
+        list.append(h('li', null, h('button', { type: 'button', class: 'card-btn al-hist-item', 'aria-pressed': String(e.id === selected), dataset: { id: e.id }, on: { click: () => {
+          selected = e.id;
+          for (const b of list.querySelectorAll('.card-btn')) b.setAttribute('aria-pressed', String((b as HTMLElement).dataset.id === e.id));
+          onPick(e.id);
+        } } },
+          h('span', { class: 'card-title' }, h('span', null, en && e.titleEn ? e.titleEn : e.title),
+            h('span', { class: `al-badge ${active ? 'al-today' : 'al-past'}` }, at(active ? 'statusActive' : 'statusEnded'))),
+          h('span', { class: 'card-meta' }, at('histItemMeta', { from: short(e.issuedAt), to: short(e.validUntil), n: e.villages, issuer: e.issuer })))));
+      }
+    };
+    const sel = (label: string, opts: [string, string][], on: (v: string) => void) => {
+      const id = nextId('alh');
+      const el = h('select', { id, class: 'select', on: { change: () => on(el.value) } }, ...opts.map(([v, l]) => h('option', { value: v }, l)));
+      return h('div', { class: 'field' }, h('label', { for: id, class: 'field-label' }, label), h('div', { class: 'select-wrap' }, el, icon('chevronDown', 'icon select-chevron')));
+    };
+    body.replaceChildren(
+      h('div', { class: 'field-row field-row-half' },
+        sel(at('histCounty'), [['', at('histAllCounties')], ...counties], (v) => { county = v; draw(); }),
+        sel(at('histYear'), [['', at('histAllYears')], ...years.map((y): [string, string] => [y, y])], (v) => { year = v; draw(); })),
+      count, list);
+    draw();
+  };
+  det.addEventListener('toggle', () => {
+    if (det.open) void load();
+  });
+  if (selected) void load();
+  return h('section', { class: 'psec al-section' }, det);
 }
 
 export { alertBBox };

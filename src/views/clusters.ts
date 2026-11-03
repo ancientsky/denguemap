@@ -12,7 +12,9 @@ import { validateClusters, validateSummary } from '../lib/validate';
 import type { MapHost, Overlay, OverlayCtx } from '../map/host';
 import { removeAll } from '../map/layers';
 import type { View, ViewContext } from './types';
-import { AlertLayers, alertBBox, alertSection, loadActiveAlerts, openAlertDialog, withAlerts } from './alerts';
+import { AlertLayers, alertBBox, alertHistory, alertSection, loadActiveAlerts, openAlertDialog, withAlerts } from './alerts';
+import { isAlertId, loadAlertById, type DengueAlert } from '../lib/alerts';
+import { at } from './alertsText';
 import { loadingBlock, panel, section, unavailableState } from './ui';
 import { isUnavailable } from '../lib/warnings';
 
@@ -59,7 +61,7 @@ class ClusterOverlay implements Overlay {
 }
 
 export default async function clustersView(ctx: ViewContext): Promise<View> {
-  const { app, root } = ctx;
+  const { app, root, setParams } = ctx;
   const pnl = panel(t('clusters.title'), t('clusters.intro'), 'panel-clusters');
   root.append(pnl.el);
   pnl.body.append(loadingBlock());
@@ -89,10 +91,12 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
 
   const clusters = clRes.status === 'fulfilled' ? clRes.value : null;
   const notices = alRes.status === 'fulfilled' ? alRes.value : [];
+  // Notices on the map: those in force plus one picked from the history (?notice=<id>, shareable).
+  let shown: DengueAlert[] = notices;
   const alertLayers = host ? new AlertLayers(host, (a) => openNotice(a)) : null;
-  alertLayers?.setAlerts(notices);
-  function openNotice(a: (typeof notices)[number] | null): void {
-    openAlertDialog(notices, a, {
+  alertLayers?.setAlerts(shown);
+  function openNotice(a: DengueAlert | null): void {
+    openAlertDialog(shown, a, {
       onShow: host ? (x) => host.fit(alertBBox(x), 15) : null,
       onLocated: (pt) => {
         alertLayers?.setMe(pt);
@@ -100,8 +104,23 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
       },
     });
   }
+  async function showNotice(id: string): Promise<void> {
+    const a = notices.find((x) => x.id === id) ?? await loadAlertById(id);
+    if (destroyed) return;
+    if (!a) {
+      app.toast(at('histNotFound'));
+      return;
+    }
+    shown = notices.some((x) => x.id === a.id) ? notices : [...notices, a];
+    alertLayers?.setAlerts(shown);
+    setParams({ notice: a.id });
+    host?.fit(alertBBox(a), 15);
+    openNotice(a);
+  }
+  const wanted = isAlertId(ctx.params.notice) ? ctx.params.notice : null;
   // Health-bureau notices first: they usually precede the CDC cluster polygons.
   if (notices.length) pnl.body.append(alertSection(notices, (a) => openNotice(a)));
+  pnl.body.append(alertHistory((id) => void showNotice(id), wanted));
   const summary = sumRes.status === 'fulfilled' ? sumRes.value : null;
   const bboxes: (BBox | null)[] = clusters?.features.map((f) => bboxOf(f.geometry)) ?? [];
   const list = h('ul', { class: 'list-cards' });
@@ -194,6 +213,8 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
     app.mapSummary(`${msg}. ${t('clusters.topTowns')}: ${top.map((r) => `${townLabel(r[0])} ${r[1]}`).join(', ') || t('clusters.topTownsEmpty')}`);
     app.announce(msg);
   }
+  // A shared link to a notice (current or past): show it on the map and open it.
+  if (wanted) void showNotice(wanted);
 
   return {
     destroy() {

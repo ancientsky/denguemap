@@ -694,6 +694,10 @@ body:has(.toast) .al-chip { top: 62px; }
 .al-me-result { font-size: 14px; font-weight: 600; }
 .al-me-result.is-inside { color: var(--local); }
 .al-section .card-title { align-items: center; }
+.al-badge.al-past { background: var(--surface-3); color: var(--muted); }
+.al-card.is-ended .al-title .icon { color: var(--muted); }
+.al-hist summary { cursor: pointer; }
+.al-hist-body { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 12px; }
 
 /* ---------------------------------------------------------------- toast, errors */
 .toast {
