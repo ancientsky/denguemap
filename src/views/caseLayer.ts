@@ -68,7 +68,6 @@ export interface CasePopupOpts {
   title: string;
   showLocal: boolean;
   showImported: boolean;
-  rangeText: string | null;
   props: Record<string, unknown>;
 }
 export function casePopup(o: CasePopupOpts): HTMLElement {
@@ -83,9 +82,7 @@ export function casePopup(o: CasePopupOpts): HTMLElement {
       h('dd', null, o.showLocal ? h('span', { class: 'pill local' }, `${t('common.local')} ${fmtNum(l)}`) : null,
         o.showImported ? h('span', { class: 'pill imported' }, `${t('common.importedShort')} ${fmtNum(i)}`) : null),
       last ? h('dt', null, t('map.popupLast')) : null,
-      last ? h('dd', null, h('span', { class: `rec-dot rec-${recencyBucket(a)}`, 'aria-hidden': 'true' }), `${fmtDate(last)}（${a <= 0 ? t('kpi.today') : t('kpi.daysAgo', { n: a })}）`) : null,
-      o.rangeText ? h('dt', null, t('map.range')) : null,
-      o.rangeText ? h('dd', null, o.rangeText) : null));
+      last ? h('dd', null, h('span', { class: `rec-dot rec-${recencyBucket(a)}`, 'aria-hidden': 'true' }), `${fmtDate(last)}（${a <= 0 ? t('kpi.today') : t('kpi.daysAgo', { n: a })}）`) : null));
 }
 
 /** Legend rows for recency colouring (+ shape key when imported cases are shown). */

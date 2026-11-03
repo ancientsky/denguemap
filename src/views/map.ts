@@ -321,7 +321,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     const pr = f.properties as Record<string, unknown>;
     let content: HTMLElement;
     if (layer === L.pts) {
-      content = casePopup({ title: townLabel(set?.pts[Number(f.id)]?.[2] ?? null), showLocal: st.type !== 'imported', showImported: st.type !== 'local', rangeText: fmtRange(), props: pr });
+      content = casePopup({ title: townLabel(set?.pts[Number(f.id)]?.[2] ?? null), showLocal: st.type !== 'imported', showImported: st.type !== 'local', props: pr });
       const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
       host.showPopup(coords, content, hover);
     } else if (layer === L.townsFill) {

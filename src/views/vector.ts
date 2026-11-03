@@ -116,7 +116,7 @@ export default async function vectorView(ctx: ViewContext): Promise<View> {
     if (!f || !host) return;
     if (layer === L.cases) {
       const pr = f.properties as Record<string, unknown>;
-      host.showPopup(e.lngLat, casePopup({ title: townLabel(caseTowns.get(Number(f.id))), showLocal: true, showImported: true, rangeText: null, props: pr }), hover);
+      host.showPopup(e.lngLat, casePopup({ title: townLabel(caseTowns.get(Number(f.id))), showLocal: true, showImported: true, props: pr }), hover);
       return;
     }
     const v = data.villages[Number(f.properties?.k)];
