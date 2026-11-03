@@ -646,6 +646,55 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 }
 .map .maplibregl-ctrl-bottom-right > .maplibregl-ctrl { float: none; flex: none; }
 
+/* ---------------------------------------------------------------- 防疫公告 (health-bureau notices) */
+.btn-sm { height: 30px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
+.al-chip {
+  position: absolute; z-index: 15; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; max-width: min(460px, calc(100% - 32px));
+  padding: 8px 14px; border-radius: 999px; font-size: 13.5px; font-weight: 650; text-align: left;
+  background: var(--warn-bg); color: var(--warn-text); border: 1px solid color-mix(in srgb, var(--adv-2) 55%, transparent);
+  box-shadow: var(--shadow-2); cursor: pointer;
+}
+.al-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-chip .icon { width: 17px; height: 17px; flex: none; }
+.al-chip:hover { filter: brightness(0.97); }
+body[data-layout="map"] .al-chip { left: calc(50% + var(--panel-w) / 2); }
+body:has(.toast) .al-chip { top: 62px; }
+.al-dialog {
+  width: min(560px, calc(100vw - 24px)); max-height: min(86vh, 900px); padding: 0; border: 1px solid var(--border);
+  border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: var(--shadow-2);
+}
+.al-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
+.al-dialog-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 14px 16px 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.al-dialog-head h2 { font-size: 17px; font-weight: 750; }
+.al-dialog-body { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 18px; }
+.al-card { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+.al-card + .al-card { border-top: 1px solid var(--border); padding-top: 16px; }
+.al-title { display: flex; align-items: flex-start; gap: 8px; font-size: 16px; font-weight: 750; line-height: 1.35; }
+.al-title .icon { width: 19px; height: 19px; color: var(--adv-2); flex: none; margin-top: 1px; }
+.al-meta { font-size: 13px; color: var(--muted); }
+.al-sec { display: flex; flex-direction: column; gap: 6px; }
+.al-sec h4 { font-size: 12.5px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; }
+.al-sec > p { font-size: 14px; }
+.al-place { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border-radius: 10px; background: var(--surface-2); }
+.al-place.is-past { opacity: 0.6; }
+.al-place-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+.al-place-meta { font-size: 13px; color: var(--text-2); }
+.al-period { font-weight: 600; font-size: 12.5px; color: var(--warn-text); }
+.al-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.al-badge { display: inline-flex; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--surface-3); color: var(--text-2); }
+.al-badge.al-today { background: var(--local-soft); color: var(--local); }
+.al-badge.al-upcoming { background: var(--accent-soft); color: var(--link); }
+.al-symptoms { font-size: 13.5px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-text); font-weight: 600; }
+.al-note { font-size: 13.5px; color: var(--text-2); }
+.al-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--muted); }
+.al-me { padding: 12px; border-radius: 12px; border: 1px solid var(--border); }
+.al-me-result:empty { display: none; }
+.al-me-result { font-size: 14px; font-weight: 600; }
+.al-me-result.is-inside { color: var(--local); }
+.al-section .card-title { align-items: center; }
+
 /* ---------------------------------------------------------------- toast, errors */
 .toast {
   position: absolute; z-index: 20; top: 14px; left: 50%; transform: translateX(-50%);
@@ -858,6 +907,9 @@ body[data-layout="map"] .toast { left: calc(50% + var(--panel-w) / 2); }
   .date-badge { top: 10px; right: auto; left: 12px; align-items: flex-start; padding: 4px 10px 5px; }
   .date-badge-date { font-size: 17px; }
   body[data-layout="map"] .toast, .toast { left: 12px; right: 12px; transform: none; max-width: none; top: 10px; font-size: 13px; padding: 8px 12px; }
+  /* below the reference-date badge (top left) and clear of the zoom buttons (top right) */
+  body[data-layout="map"] .al-chip, .al-chip { left: 12px; right: 58px; transform: none; max-width: none; top: 66px; font-size: 13px; padding: 7px 12px; }
+  body:has(.toast) .al-chip { top: 112px; }
   /* scale + the (required) basemap attribution stay visible above the collapsed sheet */
   .map .maplibregl-ctrl-bottom-right { bottom: var(--sheet-peek); }
 

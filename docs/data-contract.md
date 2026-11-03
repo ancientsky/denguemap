@@ -275,3 +275,18 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 - 測站遷移：設定的測站若已撤銷，依 C-B0074-001 的 `NewStationID` 改用新站（例：高雄 467440 → 467441），月平均沿用舊站；
   `county` 與 `series` 的鍵都是實際使用的新站代碼。
 - 沒有金鑰（本機、測試）時此來源略過，既有檔案不動。
+
+## v5 增補（2026-11-03）：alerts.json（防疫公告）
+
+由 `scripts/alerts/build.mjs` 在**建置時**從 `content/alerts/*.json` 產生（不是資料管線寫的、不進 git、不列在 manifest），
+前端以 `cache: 'no-cache'` 讀取。格式與編輯流程見 [`docs/alerts.md`](alerts.md)。
+
+```jsonc
+{ "generatedAt": "2026-11-03",
+  "alerts": [{ "id", "title", "titleEn", "county", "town", "countyZh", "countyEn", "townZh", "townEn",
+               "issuedAt", "validUntil", "issuer", "sourceUrl", "note", "noteEn",
+               "villages": [{ "code": "64000110007", "zh": "港南里", "en": "Gangnan Vil.", "town": "小港區" }],
+               "exposureSites": [{ "name", "address", "from", "to", "note", "lng", "lat" }],
+               "screeningStations": [{ "name", "address", "dates", "hours", "lng", "lat" }],
+               "area": { "type": "FeatureCollection", "features": [/* 村里界線，properties.code */] } }] }
+```

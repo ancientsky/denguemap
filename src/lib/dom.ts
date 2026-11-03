@@ -50,8 +50,11 @@ export function $(sel: string, root: ParentNode = document): HTMLElement | null 
   return root.querySelector<HTMLElement>(sel);
 }
 
-/** Safe external link: only whitelisted origins; opens in a new tab with noopener/noreferrer. */
-const SAFE_EXTERNAL = /^https:\/\/(www\.cdc\.gov\.tw|www\.nhi\.gov\.tw|github\.com\/ancientsky\/denguemap|ancientsky\.github\.io\/safetravel|ancientsky\.github\.io\/new_cdc_prototype|www\.google\.com\/maps|cdcdengue\.azurewebsites\.net|data\.gov\.tw|openfreemap\.org|www\.openstreetmap\.org|openmaptiles\.org|maplibre\.org)(\/|$)/;
+/**
+ * Safe external link: only whitelisted origins; opens in a new tab with noopener/noreferrer. Health-bureau notices
+ * (防疫公告) may cite any *.gov.tw site, official Facebook pages or the news sites listed in scripts/alerts/lib.mjs.
+ */
+const SAFE_EXTERNAL = /^https:\/\/(([a-z0-9-]+\.)+gov\.tw|(www\.)?facebook\.com|www\.mnews\.tw|www\.cna\.com\.tw|news\.pts\.org\.tw|udn\.com|news\.ltn\.com\.tw|www\.nhi\.gov\.tw|github\.com\/ancientsky\/denguemap|ancientsky\.github\.io\/safetravel|ancientsky\.github\.io\/new_cdc_prototype|www\.google\.com\/maps|cdcdengue\.azurewebsites\.net|data\.gov\.tw|openfreemap\.org|www\.openstreetmap\.org|openmaptiles\.org|maplibre\.org)(\/|$)/;
 export function extLink(url: string, label: string, cls = 'ext'): HTMLElement {
   if (!SAFE_EXTERNAL.test(url)) return h('span', { class: cls }, label);
   const a = h('a', { class: cls, href: url, target: '_blank', rel: 'noopener noreferrer' }, label);

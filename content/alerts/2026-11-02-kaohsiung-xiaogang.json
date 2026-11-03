@@ -1,0 +1,27 @@
+{
+  "id": "2026-11-02-kaohsiung-xiaogang",
+  "title": "高雄市小港區本土登革熱群聚",
+  "titleEn": "Local dengue cluster, Xiaogang District, Kaohsiung City",
+  "county": "64000",
+  "town": "64000110",
+  "issuedAt": "2026-11-02",
+  "validUntil": "2026-11-16",
+  "issuer": "高雄市政府衛生局",
+  "sourceUrl": "https://www.mnews.tw/story/mm-20261103edi047",
+  "villages": ["64000110007", "64000110001", "64000110004", "64000110006", "64000110005", "64000110008", "64000110002", "64000110003"],
+  "exposureSites": [
+    {
+      "name": "99五金賣場",
+      "address": "高雄市小港區小港路186號",
+      "from": "2026-10-17",
+      "to": "2026-11-02",
+      "note": "曾至港南里（小港路99五金賣場）活動或在賣場採購的民眾，請至採血站檢驗。"
+    }
+  ],
+  "screeningStations": [
+    { "name": "小港衛生所", "address": "高雄市小港區小港二街10號", "dates": ["2026-11-03", "2026-11-04"], "hours": ["08:30-11:30", "14:00-16:30"] },
+    { "name": "99五金賣場", "address": "高雄市小港區小港路186號", "dates": ["2026-11-03", "2026-11-04"], "hours": ["08:30-11:30", "14:00-16:30"] }
+  ],
+  "note": "請醫療院所提高警覺，落實 TOCC 問診，加強通報。",
+  "noteEn": "Clinics: stay alert, take a travel, occupation, contact and cluster (TOCC) history, and report suspected cases."
+}

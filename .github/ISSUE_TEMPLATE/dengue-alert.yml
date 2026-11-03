@@ -1,0 +1,128 @@
+name: 新增防疫公告
+description: 把衛生局的登革熱防疫公告（警戒範圍、曾至地點、採檢站）加到登革熱地圖。送出後系統會自動檢查並建立合併請求，經審核合併後約 3 分鐘上線。
+title: "[防疫公告] "
+labels: ["防疫公告"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        只有本專案的維護者送出的表單會被處理。所有欄位請依衛生局**原始公告**填寫；海報上的內容請轉成文字，不要上傳圖片。
+        欄位說明與範例：[docs/alerts.md](https://github.com/ancientsky/denguemap/blob/main/docs/alerts.md)
+  - type: dropdown
+    id: county
+    attributes:
+      label: 縣市
+      options:
+        - 臺北市
+        - 新北市
+        - 桃園市
+        - 臺中市
+        - 臺南市
+        - 高雄市
+        - 基隆市
+        - 新竹市
+        - 新竹縣
+        - 苗栗縣
+        - 彰化縣
+        - 南投縣
+        - 雲林縣
+        - 嘉義市
+        - 嘉義縣
+        - 屏東縣
+        - 宜蘭縣
+        - 花蓮縣
+        - 臺東縣
+        - 澎湖縣
+        - 金門縣
+        - 連江縣
+    validations:
+      required: true
+  - type: input
+    id: town
+    attributes:
+      label: 鄉鎮市區
+      placeholder: 小港區
+    validations:
+      required: true
+  - type: input
+    id: title
+    attributes:
+      label: 公告標題
+      placeholder: 高雄市小港區本土登革熱群聚
+    validations:
+      required: true
+  - type: input
+    id: title_en
+    attributes:
+      label: 英文標題（選填）
+      placeholder: Local dengue cluster, Xiaogang District, Kaohsiung City
+  - type: input
+    id: issued
+    attributes:
+      label: 發布日期
+      description: YYYY-MM-DD
+      placeholder: "2026-11-02"
+    validations:
+      required: true
+  - type: input
+    id: valid_until
+    attributes:
+      label: 有效期限
+      description: 過了這天地圖上自動不再顯示（最多發布後 60 天）。YYYY-MM-DD
+      placeholder: "2026-11-16"
+    validations:
+      required: true
+  - type: input
+    id: issuer
+    attributes:
+      label: 發布單位
+      placeholder: 高雄市政府衛生局
+    validations:
+      required: true
+  - type: input
+    id: source_url
+    attributes:
+      label: 來源網址
+      description: 限政府網站（*.gov.tw）、官方臉書或主要新聞網站，https 開頭
+    validations:
+      required: true
+  - type: textarea
+    id: villages
+    attributes:
+      label: 警戒範圍村里
+      description: 村里名稱，以頓號、逗號或換行分隔（可省略「里」字）；跨鄉鎮的村里請填 11 碼村里代碼
+      placeholder: 港南里、小港里、港墘里、港后里、港明里、港興里、港口里、港正里
+    validations:
+      required: true
+  - type: textarea
+    id: exposure
+    attributes:
+      label: 曾至地點（選填）
+      description: |
+        一行一處：名稱｜地址｜開始日期｜結束日期｜說明｜座標（選填，可在 Google 地圖按右鍵複製「緯度, 經度」）
+      placeholder: 99五金賣場｜高雄市小港區小港路186號｜10/17｜11/2｜曾至港南里活動或在賣場採購的民眾，請至採血站檢驗。｜
+  - type: textarea
+    id: stations
+    attributes:
+      label: 採檢站（選填）
+      description: |
+        一行一處：名稱｜地址｜日期（以逗號分隔）｜時段（以逗號分隔）｜座標（選填）
+      placeholder: |
+        小港衛生所｜高雄市小港區小港二街10號｜11/3, 11/4｜08:30-11:30, 14:00-16:30｜
+        99五金賣場｜高雄市小港區小港路186號｜11/3, 11/4｜08:30-11:30, 14:00-16:30｜
+  - type: textarea
+    id: note
+    attributes:
+      label: 說明（選填）
+      placeholder: 請醫療院所提高警覺，落實 TOCC 問診，加強通報。
+  - type: textarea
+    id: note_en
+    attributes:
+      label: 英文說明（選填）
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 確認
+      options:
+        - label: 已核對衛生局原始公告，內容一致
+          required: true

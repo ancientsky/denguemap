@@ -1,0 +1,94 @@
+name: alert-from-issue
+
+# 「新增防疫公告」issue form → content/alerts/<id>.json on branch alert/issue-<n> → pull request for review.
+# Only issues opened by maintainers are processed. The issue body is untrusted text: it reaches the converter
+# through an environment variable only (never interpolated into a shell command) and is fully validated.
+on:
+  issues:
+    types: [opened, edited]
+
+permissions: {}
+
+concurrency:
+  group: alert-issue-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  alert:
+    # the template applies the label once it exists; until then the title prefix identifies the form
+    if: contains(github.event.issue.labels.*.name, '防疫公告') || startsWith(github.event.issue.title, '[防疫公告]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NUMBER: ${{ github.event.issue.number }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Maintainers only
+        if: ${{ !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) }}
+        run: |
+          gh issue comment "$NUMBER" --repo "$REPO" --body "只有本專案的維護者可以透過表單新增防疫公告，這則 issue 不會建立變更。"
+          exit 1
+
+      - name: Label the issue
+        run: |
+          gh label create "防疫公告" --repo "$REPO" --color F59E0B --description "登革熱地圖防疫公告表單" 2>/dev/null || true
+          gh issue edit "$NUMBER" --repo "$REPO" --add-label "防疫公告" || true
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        # no lifecycle scripts: this job holds a write token
+        run: npm ci --ignore-scripts
+
+      - name: Convert the form
+        id: convert
+        continue-on-error: true
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: node scripts/alerts/from-issue.mjs
+
+      - name: Report problems on the issue
+        if: steps.convert.outcome == 'failure'
+        run: |
+          gh issue comment "$NUMBER" --repo "$REPO" --body-file alert-errors.md
+          exit 1
+
+      - name: Validate every notice
+        run: |
+          node scripts/alerts/build.mjs --check
+          npx vitest run tests/data/alerts.test.mjs tests/data/alert-issue.test.mjs
+
+      - name: Open or update the pull request
+        env:
+          ID: ${{ steps.convert.outputs.id }}
+        run: |
+          set -euo pipefail
+          BRANCH="alert/issue-$NUMBER"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add "content/alerts/$ID.json"
+          git commit -m "防疫公告：$ID (#$NUMBER)"
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          if [ -n "$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number')" ]; then
+            gh issue comment "$NUMBER" --repo "$REPO" --body "已依修改後的表單更新合併請求（分支 \`$BRANCH\`）。"
+          elif gh pr create --repo "$REPO" --base main --head "$BRANCH" --title "防疫公告：$ID" --body-file pr-body.md; then
+            gh issue comment "$NUMBER" --repo "$REPO" --body "已建立合併請求，請審核者對照原始公告核對後合併；合併後約 3 分鐘上線。"
+          else
+            gh issue comment "$NUMBER" --repo "$REPO" --body "內容檢查通過，變更已放在分支 \`$BRANCH\`，但系統無法自動建立合併請求。請點這裡建立：https://github.com/$REPO/compare/main...$BRANCH?expand=1 （若要自動建立，請到 Settings → Actions → General 勾選「Allow GitHub Actions to create and approve pull requests」。）"
+          fi

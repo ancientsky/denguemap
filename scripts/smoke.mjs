@@ -5,9 +5,9 @@
 //
 //   npm run build && npm run smoke
 //   SMOKE_ROUTES=map,trends SMOKE_LANGS=zh SMOKE_THEMES=dark SMOKE_DEVICES=mobile npm run smoke
-//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed,cls,forecast — default: all)
+//   SMOKE_PASSES=embed npm run smoke      (matrix,interact,period,zoom,anim,perf,embed,cls,forecast,alerts — default: all)
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -28,9 +28,11 @@ const DEVICES = {
   mobile: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
 };
 const DEVICE_NAMES = list('SMOKE_DEVICES', Object.keys(DEVICES));
-const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'anim', 'perf', 'embed', 'cls', 'forecast']);
+const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'anim', 'perf', 'embed', 'cls', 'forecast', 'alerts']);
 const run = (name) => PASSES.includes(name);
 const ALLOWED = /tiles\.openfreemap\.org/;
+// The notices file is fetched after a view has mounted: leaving the page right away aborts it, which is harmless.
+const benignAbort = (req) => /\/data\/alerts\.json/.test(req.url()) && /ERR_ABORTED/.test(req.failure()?.errorText ?? '');
 // SMOKE_DATA=<dir>: serve /denguemap/data/* from another directory (e.g. .fixtures/data) without touching public/data.
 const DATA_DIR = process.env.SMOKE_DATA ? join(process.cwd(), process.env.SMOKE_DATA) : null;
 async function prepare(ctx) {
@@ -113,7 +115,7 @@ function watch(page, label) {
   });
   page.on('pageerror', (err) => failures.push(`[${label()}] pageerror: ${err.message}`));
   page.on('requestfailed', (req) => {
-    if (!ALLOWED.test(req.url())) failures.push(`[${label()}] requestfailed: ${req.url()} ${req.failure()?.errorText}`);
+    if (!ALLOWED.test(req.url()) && !benignAbort(req)) failures.push(`[${label()}] requestfailed: ${req.url()} ${req.failure()?.errorText}`);
   });
   page.on('response', (res) => {
     if (res.status() >= 400 && !ALLOWED.test(res.url())) failures.push(`[${label()}] HTTP ${res.status()}: ${res.url()}`);
@@ -772,7 +774,7 @@ try {
         });
         page.on('pageerror', (err) => failures.push(`[${current}] pageerror: ${err.message}`));
         page.on('requestfailed', (req) => {
-          if (!ALLOWED.test(req.url())) failures.push(`[${current}] requestfailed: ${req.url()} ${req.failure()?.errorText}`);
+          if (!ALLOWED.test(req.url()) && !benignAbort(req)) failures.push(`[${current}] requestfailed: ${req.url()} ${req.failure()?.errorText}`);
         });
         page.on('response', (res) => {
           if (res.status() >= 400 && !ALLOWED.test(res.url())) failures.push(`[${current}] HTTP ${res.status()}: ${res.url()}`);
@@ -1148,6 +1150,61 @@ try {
     }
     await ctx.close();
     console.log('forecast pass done');
+  }
+  // 防疫公告: the built alerts.json with its dates moved around today (the real notice expires), so the chip, the
+  // dialog, the on-device location check and the clusters section are always exercised.
+  if (run('alerts')) {
+    const label = 'alerts';
+    const built = JSON.parse(readFileSync(join(process.cwd(), 'dist/data/alerts.json'), 'utf8'));
+    const day = (n) => new Date(Date.now() + 8 * 3600_000 + n * 86_400_000).toISOString().slice(0, 10);
+    const fixture = { ...built, alerts: built.alerts.slice(0, 1).map((a) => ({ ...a, issuedAt: day(-1), validUntil: day(10),
+      screeningStations: a.screeningStations.map((st) => ({ ...st, dates: [day(0), day(1)] })) })) };
+    if (!fixture.alerts.length) failures.push('[alerts] dist/data/alerts.json has no notice to test with');
+    else {
+      // a point inside the first village polygon (grid search over its bounding box, ray casting)
+      const g = fixture.alerts[0].area.features[0].geometry;
+      const ring = (g.type === 'Polygon' ? g.coordinates : g.coordinates[0])[0];
+      const inside = (x, y) => ring.reduce((acc, p, i) => {
+        const q = ring[(i + ring.length - 1) % ring.length];
+        return (p[1] > y) !== (q[1] > y) && x < ((q[0] - p[0]) * (y - p[1])) / (q[1] - p[1]) + p[0] ? !acc : acc;
+      }, false);
+      const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
+      let pt = null;
+      for (let i = 1; i < 30 && !pt; i++) for (let j = 1; j < 30 && !pt; j++) {
+        const x = Math.min(...xs) + ((Math.max(...xs) - Math.min(...xs)) * i) / 30, y = Math.min(...ys) + ((Math.max(...ys) - Math.min(...ys)) * j) / 30;
+        if (inside(x, y)) pt = { longitude: x, latitude: y };
+      }
+      const ctx = await browser.newContext({ ...DEVICES.desktop, colorScheme: 'light', reducedMotion: 'reduce', geolocation: pt, permissions: ['geolocation'] });
+      await ctx.addInitScript(() => { try { localStorage.setItem('denguemap.lang', 'zh'); } catch {} });
+      await prepare(ctx);
+      await ctx.route(/\/data\/alerts\.json/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fixture) }));
+      const page = await ctx.newPage();
+      page.on('pageerror', (err) => failures.push(`[${label}] pageerror: ${err.message}`));
+      page.on('console', (msg) => {
+        if (msg.type() === 'error' && !ALLOWED.test(msg.text()) && !ALLOWED.test(msg.location()?.url ?? '')) failures.push(`[${label}] console.error: ${msg.text()}`);
+      });
+      try {
+        await page.goto(`${BASE}#/map`);
+        await page.waitForSelector('.al-chip', { timeout: 20000 });
+        await page.click('.al-chip');
+        await page.waitForSelector('dialog.al-dialog[open]', { timeout: 5000 });
+        if (!(await page.isVisible('.al-station .al-today'))) failures.push('[alerts] station open today not marked');
+        await page.click('.al-me .btn');
+        await page.waitForFunction(() => /警戒範圍內/.test(document.querySelector('.al-me-result')?.textContent ?? ''), null, { timeout: 10000 })
+          .catch(async () => failures.push(`[alerts] location check: ${await page.textContent('.al-me-result')}`));
+        await page.screenshot({ path: join(OUT, 'alerts-dialog.png') });
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('dialog.al-dialog', { state: 'detached', timeout: 5000 }).catch(() => failures.push('[alerts] dialog did not close'));
+        await page.goto(`${BASE}#/clusters`);
+        await viewReady(page, 'clusters');
+        if (!(await page.isVisible('.al-section .al-card-btn'))) failures.push('[alerts] clusters page has no notice');
+        await page.screenshot({ path: join(OUT, 'alerts-clusters.png') });
+      } catch (e) {
+        failures.push(`[alerts] ${e.message}`);
+      }
+      await ctx.close();
+      console.log('alerts pass done');
+    }
   }
   if (run('embed')) await embedPass();
   if (run('cls')) await clsPass();

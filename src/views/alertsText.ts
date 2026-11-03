@@ -1,0 +1,98 @@
+// Strings of the 防疫公告 UI (map and clusters views only; kept out of the entry-chunk dictionaries).
+import { getLang } from '../i18n';
+
+const zh = {
+  chip: '防疫公告：{title}',
+  chipMore: '防疫公告：{title} 等 {n} 則',
+  chipOpen: '查看衛生局防疫公告',
+  dialogTitle: '衛生局防疫公告',
+  close: '關閉',
+  issued: '{issuer}・{date} 發布',
+  validUntil: '有效至 {date}',
+  source: '原始公告',
+  disclaimer: '內容依衛生局公告整理，以衛生局最新公告為準。',
+  area: '警戒範圍',
+  areaTown: '{county}{town}',
+  sites: '曾至地點',
+  sitePeriod: '{from}～{to}',
+  stations: '採檢站',
+  stToday: '今天',
+  stUpcoming: '即將',
+  stPast: '已結束',
+  stDates: '日期：{dates}',
+  stHours: '時段：{hours}',
+  navigate: '導航',
+  calendar: '加入行事曆',
+  calSummary: '登革熱採檢：{name}',
+  symptoms: '出現發燒、頭痛、後眼窩痛、肌肉關節痛、皮膚紅疹等任一登革熱疑似症狀：有症狀、速就醫，告知醫師居住及活動史，驗登革熱快篩！',
+  showOnMap: '在地圖上看',
+  meTitle: '我在警戒範圍內嗎？',
+  meButton: '用我的位置檢查',
+  mePrivacy: '位置只在你的裝置上比對，不會傳送或儲存。',
+  meChecking: '取得位置中…',
+  meInside: '你目前在{area}的警戒範圍內（{village}）。請留意症狀，並清除住家內外積水容器。',
+  meOutside: '你目前不在任何生效中的警戒範圍內。',
+  meNearest: '最近的警戒範圍是{area}{village}，距離約 {km} 公里。',
+  meDenied: '無法取得位置（未允許定位，或此頁面嵌在其他網站中）。',
+  meError: '無法取得位置，請稍後再試。',
+  meUnsupported: '這個瀏覽器不支援定位。',
+  popupArea: '警戒範圍・{village}',
+  popupOpen: '查看公告',
+  sectionTitle: '衛生局防疫公告',
+  sectionNote: '地方衛生局公布的警戒範圍與採檢站，通常比疾管署聚集資料更早出現。',
+  cardMeta: '{date} 發布・{n} 個村里',
+  stationToday: '今天有採檢站',
+};
+
+type Key = keyof typeof zh;
+
+const en: { readonly [K in Key]: string } = {
+  chip: 'Health notice: {title}',
+  chipMore: 'Health notices: {title} and {n} more',
+  chipOpen: 'Open health bureau notices',
+  dialogTitle: 'Health bureau notices',
+  close: 'Close',
+  issued: '{issuer} · issued {date}',
+  validUntil: 'valid until {date}',
+  source: 'Original notice',
+  disclaimer: 'Summarised from the health bureau notice; the bureau\'s latest notice prevails.',
+  area: 'Warning area',
+  areaTown: '{town}, {county}',
+  sites: 'Places visited by cases',
+  sitePeriod: '{from} – {to}',
+  stations: 'Blood test stations',
+  stToday: 'Today',
+  stUpcoming: 'Upcoming',
+  stPast: 'Ended',
+  stDates: 'Dates: {dates}',
+  stHours: 'Hours: {hours}',
+  navigate: 'Directions',
+  calendar: 'Add to calendar',
+  calSummary: 'Dengue blood test: {name}',
+  symptoms: 'Fever, headache, pain behind the eyes, muscle or joint pain, or a rash: see a doctor promptly, mention where you live and have been, and ask for a dengue rapid test.',
+  showOnMap: 'Show on map',
+  meTitle: 'Am I inside a warning area?',
+  meButton: 'Check my location',
+  mePrivacy: 'Your location is compared on your device only; it is never sent or stored.',
+  meChecking: 'Getting your location…',
+  meInside: 'You are inside the warning area of {area} ({village}). Watch for symptoms and empty standing water around your home.',
+  meOutside: 'You are not inside any current warning area.',
+  meNearest: 'The nearest warning area is {village}, {area}, about {km} km away.',
+  meDenied: 'Location unavailable (permission denied, or this page is embedded in another site).',
+  meError: 'Could not get your location; please try again later.',
+  meUnsupported: 'This browser does not support location.',
+  popupArea: 'Warning area · {village}',
+  popupOpen: 'Open notice',
+  sectionTitle: 'Health bureau notices',
+  sectionNote: 'Warning areas and test stations announced by local health bureaus, usually before the CDC cluster data.',
+  cardMeta: 'issued {date} · {n} villages',
+  stationToday: 'Test station open today',
+};
+
+export function at(key: Key, vars?: Record<string, string | number>): string {
+  const s: string = (getLang() === 'en' ? en : zh)[key];
+  if (!vars) return s;
+  return s.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
+}
+
+export const ALERT_DICTS = { zh, en };

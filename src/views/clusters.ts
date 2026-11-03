@@ -12,6 +12,7 @@ import { validateClusters, validateSummary } from '../lib/validate';
 import type { MapHost, Overlay, OverlayCtx } from '../map/host';
 import { removeAll } from '../map/layers';
 import type { View, ViewContext } from './types';
+import { AlertLayers, alertBBox, alertSection, loadActiveAlerts, openAlertDialog, withAlerts } from './alerts';
 import { loadingBlock, panel, section, unavailableState } from './ui';
 import { isUnavailable } from '../lib/warnings';
 
@@ -66,7 +67,8 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
 
   const [host, admin] = await Promise.all([app.getMapHost(), loadAdmin().catch(() => null as Admin | null)]);
   if (host) host.padding = pnl.padding;
-  const [clRes, sumRes] = await Promise.allSettled([loadData('clusters.json', validateClusters), loadData('summary.json', validateSummary)]);
+  // Notices load with the clusters so the panel fills in one go (no layout shift when they arrive).
+  const [clRes, sumRes, alRes] = await Promise.allSettled([loadData('clusters.json', validateClusters), loadData('summary.json', validateSummary), loadActiveAlerts()]);
   if (destroyed) return { destroy() {} };
   clear(pnl.body);
 
@@ -86,6 +88,20 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
   };
 
   const clusters = clRes.status === 'fulfilled' ? clRes.value : null;
+  const notices = alRes.status === 'fulfilled' ? alRes.value : [];
+  const alertLayers = host ? new AlertLayers(host, (a) => openNotice(a)) : null;
+  alertLayers?.setAlerts(notices);
+  function openNotice(a: (typeof notices)[number] | null): void {
+    openAlertDialog(notices, a, {
+      onShow: host ? (x) => host.fit(alertBBox(x), 15) : null,
+      onLocated: (pt) => {
+        alertLayers?.setMe(pt);
+        host?.jump(pt, 14);
+      },
+    });
+  }
+  // Health-bureau notices first: they usually precede the CDC cluster polygons.
+  if (notices.length) pnl.body.append(alertSection(notices, (a) => openNotice(a)));
   const summary = sumRes.status === 'fulfilled' ? sumRes.value : null;
   const bboxes: (BBox | null)[] = clusters?.features.map((f) => bboxOf(f.geometry)) ?? [];
   const list = h('ul', { class: 'list-cards' });
@@ -163,13 +179,14 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
             h('dt', null, t('common.importedShort')), h('dd', null, h('span', { class: 'pill imported' }, fmtNum(Number(f.properties?.i) || 0))))), hover);
       }
     };
-    host.setOverlay(new ClusterOverlay(host, clusters, townsFC, onPick));
+    const base = new ClusterOverlay(host, clusters, townsFC, onPick);
+    host.setOverlay(alertLayers ? withAlerts(base, alertLayers) : base);
     // Camera: clusters if any, else the last-14-day towns, else all of Taiwan.
     const all = (bbs: (BBox | null | undefined)[]): BBox | null => {
       const v = bbs.filter((b): b is BBox => !!b);
       return v.length ? [Math.min(...v.map((b) => b[0])), Math.min(...v.map((b) => b[1])), Math.max(...v.map((b) => b[2])), Math.max(...v.map((b) => b[3]))] : null;
     };
-    const clusterBox = all(bboxes);
+    const clusterBox = all([...bboxes, ...notices.map(alertBBox)]);
     const target = clusterBox ?? all(top.map((r) => admin?.towns.get(r[0])?.bbox)) ?? TAIWAN_BOUNDS;
     host.fit(target, clusterBox ? 12 : 8.5);
     const n = clusters.features.length;

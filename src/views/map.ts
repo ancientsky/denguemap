@@ -23,6 +23,8 @@ import { addCountBadge, addNs1Icon, addRiskSquares } from '../map/images';
 import { caseFeatures, casePaint, casePopup, caseSortKey, recencyLegend, type ColorMode } from './caseLayer';
 import { dualRange } from './range';
 import type { View, ViewContext } from './types';
+import { loadActiveAlerts, type DengueAlert } from '../lib/alerts';
+type AlertsMod = typeof import('./alerts');
 import { keptYearText, kpis, legendItem, loadingBlock, notice, panel, section, segmented, select, toggle, warningText, type KpiSpec } from './ui';
 import { casesShortfalls, keptYears } from '../lib/warnings';
 
@@ -353,6 +355,18 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   };
 
   const overlay = host ? new CasesOverlay(host, admin, onPick) : null;
+  // 防疫公告 (health-bureau notices): drawn over the case map, opened from a floating chip or a map popup. The UI
+  // module is only loaded when a notice is in force.
+  let notices: DengueAlert[] = [];
+  let amod: AlertsMod | null = null;
+  let alertLayers: import('./alerts').AlertLayers | null = null;
+  const openNotice = (a: DengueAlert | null) => amod?.openAlertDialog(notices, a, {
+    onShow: host ? (x) => host.fit(amod!.alertBBox(x), 15) : null,
+    onLocated: (pt) => {
+      alertLayers?.setMe(pt);
+      host?.jump(pt, 14);
+    },
+  });
   let ns1Data: NS1 | null = null;
   let vmod: VectorMod | null = null;
   let vecBundle: import('./vectorData').VectorBundle | null = null;
@@ -776,6 +790,22 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     host.setOverlay(overlay);
     zoomToCounty();
   }
+  // Notices load after the view and never block it; the chip is absolutely positioned (no layout shift).
+  void loadActiveAlerts().then(async (list) => {
+    if (destroyed || !list.length) return;
+    const m = await import('./alerts');
+    if (destroyed) return;
+    amod = m;
+    notices = list;
+    if (host && overlay) {
+      alertLayers = new m.AlertLayers(host, (a) => openNotice(a));
+      alertLayers.setAlerts(list);
+      host.setOverlay(m.withAlerts(overlay, alertLayers)); // re-installs the case layers once, like a theme switch
+    }
+    const chip = m.alertChip(list, () => openNotice(null));
+    document.querySelector('.map-stage')?.append(chip);
+    cleanups.push(() => chip.remove());
+  });
   if (st.ns1) void applyNs1();
   if (st.mv) void applyVector();
   await loadPeriod();
