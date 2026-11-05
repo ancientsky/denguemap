@@ -34,6 +34,7 @@ const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: 
 export class AlertLayers {
   private alerts: DengueAlert[] = [];
   private me: [number, number] | null = null;
+  private visible = true;
   private map: MLMap | null = null;
   private unbind: (() => void)[] = [];
   constructor(private host: MapHost, private onOpen: (a: DengueAlert) => void) {}
@@ -41,6 +42,13 @@ export class AlertLayers {
   setAlerts(alerts: DengueAlert[]): void {
     this.alerts = alerts;
     this.push();
+  }
+  /** Show or hide every notice layer (the panel switch). */
+  setVisible(on: boolean): void {
+    this.visible = on;
+    if (!this.map) return;
+    for (const id of Object.values(L)) if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    if (!on) this.host.hidePopup();
   }
   setMe(pt: [number, number] | null): void {
     this.me = pt;
@@ -78,12 +86,13 @@ export class AlertLayers {
     (m.getSource(S.me) as { setData?(d: unknown): void } | undefined)?.setData?.(this.meFC());
   }
 
-  install({ map, palette: p }: OverlayCtx): void {
+  /** `below`: the view's lowest layer — the warning areas go under the view's own layers (cases, mosquito villages). */
+  install({ map, palette: p }: OverlayCtx, below?: string): void {
     this.map = map;
     addAlertIcons(map, { station: ICON_STATION, site: ICON_SITE }, { station: p.local, site: p.adv[1], halo: p.halo, text: p.text });
     map.addSource(S.area, { type: 'geojson', data: this.areaFC() });
-    map.addLayer({ id: L.fill, type: 'fill', source: S.area, paint: { 'fill-color': p.adv[1], 'fill-opacity': 0.16 } });
-    map.addLayer({ id: L.line, type: 'line', source: S.area, paint: { 'line-color': p.adv[2], 'line-width': 2, 'line-dasharray': [3, 2] } });
+    map.addLayer({ id: L.fill, type: 'fill', source: S.area, paint: { 'fill-color': p.adv[1], 'fill-opacity': 0.16 } }, below);
+    map.addLayer({ id: L.line, type: 'line', source: S.area, paint: { 'line-color': p.adv[2], 'line-width': 2, 'line-dasharray': [3, 2] } }, below);
     map.addSource(S.places, { type: 'geojson', data: this.placesFC() });
     map.addLayer({ id: L.places, type: 'symbol', source: S.places, layout: {
       'icon-image': ['match', ['get', 'kind'], 'station', ICON_STATION, ICON_SITE], 'icon-allow-overlap': true, 'icon-ignore-placement': true,
@@ -91,6 +100,7 @@ export class AlertLayers {
     map.addSource(S.me, { type: 'geojson', data: this.meFC() });
     map.addLayer({ id: L.meHalo, type: 'circle', source: S.me, paint: { 'circle-radius': 14, 'circle-color': p.accent, 'circle-opacity': 0.2 } });
     map.addLayer({ id: L.me, type: 'circle', source: S.me, paint: { 'circle-radius': 6, 'circle-color': p.accent, 'circle-stroke-color': p.halo, 'circle-stroke-width': 2.5 } });
+    if (!this.visible) this.setVisible(false);
     if (!this.unbind.length) {
       this.unbind.push(this.host.interactive(L.fill, (e, hv) => this.pick(e, hv)), this.host.interactive(L.places, (e, hv) => this.pick(e, hv)));
     }
@@ -107,6 +117,9 @@ export class AlertLayers {
     const pr = e.features?.[0]?.properties;
     const a = this.alerts[Number(pr?.i)];
     if (!pr || !a) return;
+    // A warning area is a backdrop: where the view's own features (cases, mosquito villages, clinics…) are under
+    // the pointer, their popup wins. Markers (stations, places) are deliberate targets and always answer.
+    if (pr.kind === undefined && this.map?.queryRenderedFeatures(e.point).some((f) => f.layer.id.startsWith('dm-') && !f.layer.id.startsWith('dm-al-'))) return;
     let body: HTMLElement;
     if (pr.kind === 'station') {
       const s = a.screeningStations[Number(pr.j)];
@@ -133,8 +146,9 @@ export function withAlerts(base: Overlay, layers: AlertLayers): Overlay {
   return {
     ...(base.projection ? { projection: base.projection } : {}),
     install(ctx) {
+      const before = new Set(ctx.map.getStyle().layers.map((l) => l.id));
       base.install(ctx);
-      layers.install(ctx);
+      layers.install(ctx, ctx.map.getStyle().layers.find((l) => !before.has(l.id))?.id);
     },
     uninstall(map) {
       layers.uninstall(map);
@@ -242,14 +256,15 @@ export function alertChip(alerts: DengueAlert[], onOpen: () => void): HTMLElemen
 }
 
 /** Compact list for the clusters panel. */
-export function alertSection(alerts: DengueAlert[], onOpen: (a: DengueAlert) => void): HTMLElement {
+export function alertSection(alerts: DengueAlert[], onOpen: (a: DengueAlert) => void, extra: HTMLElement | null = null): HTMLElement {
   const today = todayTaipei();
   return h('section', { class: 'psec al-section' },
     h('h2', { class: 'psec-title' }, at('sectionTitle')),
     h('ul', { class: 'list-cards' }, ...alerts.map((a) => h('li', null, h('button', { type: 'button', class: 'card-btn al-card-btn', on: { click: () => onOpen(a) } },
       h('span', { class: 'card-title' }, h('span', null, titleOf(a)), a.screeningStations.some((s) => stationStatus(s, today) === 'today') ? h('span', { class: 'al-badge al-today' }, at('stationToday')) : null),
       h('span', { class: 'card-meta' }, h('span', null, at('cardMeta', { date: short(a.issuedAt), n: a.villages.length })), h('span', null, a.issuer)))))),
-    h('p', { class: 'hint' }, at('sectionNote')));
+    h('p', { class: 'hint' }, at('sectionNote')),
+    extra);
 }
 
 /**

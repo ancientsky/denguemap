@@ -23,7 +23,7 @@ describe('map params', () => {
   const ytd = { preset: 'ytd', year: 2026, start: '2026-01-01', end: '2026-10-17', capped: false };
   it('defaults to this year up to today (Taiwan)', () => {
     const p = normalizeMapParams({}, ctx);
-    expect(p).toEqual({ period: ytd, from: '2026-01-01', to: '2026-10-17', type: 'local', county: null, mode: 'points', ns1: false, color: 'recency', mv: false });
+    expect(p).toEqual({ period: ytd, from: '2026-01-01', to: '2026-10-17', type: 'local', county: null, mode: 'points', ns1: false, color: 'recency', mv: false, al: true });
   });
   it('translates old year/day-of-year links to dates', () => {
     expect(normalizeMapParams({ year: '2025', from: '0', to: '999' }, ctx)).toMatchObject({ period: { preset: 'year', year: 2025, start: '2025-01-01', end: '2025-12-31' }, from: '2025-01-01', to: '2025-12-31' });
@@ -60,7 +60,7 @@ describe('map params', () => {
   it('serialises without defaults and round-trips', () => {
     expect(serializeMapParams(normalizeMapParams({}, ctx), ctx)).toEqual({});
     for (const raw of <Record<string, string>[]>[
-      { p: 'year', year: '2015', type: 'all', county: '67000', from: '2015-05-30', to: '2015-10-27', mode: 'towns', ns1: '1', color: 'type', mv: '1' },
+      { p: 'year', year: '2015', type: 'all', county: '67000', from: '2015-05-30', to: '2015-10-27', mode: 'towns', ns1: '1', color: 'type', mv: '1', al: '0' },
       { p: 'custom', start: '2025-12-01', end: '2026-01-31', to: '2026-01-10' },
       { p: '90d' }, { p: 'py' }, { p: '12m', from: '2026-01-01' },
     ]) {

@@ -1195,6 +1195,12 @@ try {
         await page.screenshot({ path: join(OUT, 'alerts-dialog.png') });
         await page.keyboard.press('Escape');
         await page.waitForSelector('dialog.al-dialog', { state: 'detached', timeout: 5000 }).catch(() => failures.push('[alerts] dialog did not close'));
+        // the layer switch in the panel: enabled once notices are in force, shareable as al=0
+        const sw = page.locator('.switch', { hasText: '衛生局防疫公告' });
+        if (await sw.locator('input').isDisabled()) failures.push('[alerts] notice layer switch disabled while a notice is in force');
+        await sw.click();
+        await page.waitForFunction(() => location.hash.includes('al=0'), null, { timeout: 5000 }).catch(() => failures.push(`[alerts] switch not in the URL: ${page.url()}`));
+        await sw.click();
         await page.goto(`${BASE}#/clusters`);
         await viewReady(page, 'clusters');
         if (!(await page.isVisible('.al-section .al-card-btn'))) failures.push('[alerts] clusters page has no notice');

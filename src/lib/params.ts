@@ -40,6 +40,8 @@ export interface MapParams {
   color: ColorBy;
   /** mosquito-risk village overlay */
   mv: boolean;
+  /** health-bureau notices (防疫公告) layer: on unless al=0 */
+  al: boolean;
 }
 export interface MapCtx extends PeriodCtx {
   counties: ReadonlySet<string>;
@@ -83,6 +85,7 @@ export function normalizeMapParams(raw: Params, ctx: MapCtx): MapParams {
     ns1: raw.ns1 === '1',
     color: oneOf(raw.color, COLOR_BY, 'recency'),
     mv: raw.mv === '1',
+    al: raw.al !== '0',
   };
 }
 
@@ -104,6 +107,7 @@ export function serializeMapParams(p: MapParams, ctx: MapCtx): Params {
   if (p.ns1) out.ns1 = '1';
   if (p.color !== 'recency') out.color = p.color;
   if (p.mv) out.mv = '1';
+  if (!p.al) out.al = '0';
   return out;
 }
 

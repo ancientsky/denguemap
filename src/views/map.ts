@@ -499,6 +499,15 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     void applyVector();
     commit();
   }, 'vector');
+  // 防疫公告 layer switch: always present (no layout shift when the notices arrive), disabled while none is in force.
+  const alNote = h('p', { class: 'hint' }, t('map.alertsNone'));
+  const alToggle = toggle(t('map.alerts'), st.al, (on) => {
+    st = { ...st, al: on };
+    alertLayers?.setVisible(on);
+    commit();
+  }, 'alert');
+  const alInput = alToggle.querySelector('input')!;
+  alInput.disabled = true;
   const ns1Note = h('p', { class: 'hint' });
   const ns1Toggle = toggle(t('map.ns1'), st.ns1, (on) => {
     st = { ...st, ns1: on };
@@ -588,7 +597,7 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
   pnl.body.append(
     section(null, h('div', { class: 'field-row field-row-half' }, periodSel, countySel), yearRow, customRow, periodHint, emptyNote, typeSeg),
     section(t('map.range'), range.el, h('div', { class: 'play-row' }, playBtn, stopBtn, speedSel), h('p', { class: 'hint' }, t('map.playHint')), statusLine, warnBox),
-    section(null, modeSeg, colorSeg, mvToggle, mvNote, ns1Toggle, ns1Note),
+    section(null, modeSeg, colorSeg, mvToggle, mvNote, ns1Toggle, ns1Note, alToggle, alNote),
     section(t('common.legend'), legend, resultLine),
     section(t('map.topTowns'), topList),
     h('p', { class: 'privacy-note' }, icon('pin'), t('map.privacy')),
@@ -808,8 +817,11 @@ export default async function mapView(ctx: ViewContext): Promise<View> {
     if (host && overlay) {
       alertLayers = new m.AlertLayers(host, (a) => openNotice(a));
       alertLayers.setAlerts(list);
+      alertLayers.setVisible(st.al);
       host.setOverlay(m.withAlerts(overlay, alertLayers)); // re-installs the case layers once, like a theme switch
     }
+    alInput.disabled = false;
+    alNote.textContent = t('map.alertsNote');
     const chip = m.alertChip(list, () => openNotice(null));
     document.querySelector('.map-stage')?.append(chip);
     cleanups.push(() => chip.remove());

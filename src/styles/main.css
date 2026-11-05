@@ -649,6 +649,7 @@ body[data-layout="map"] .view > .view-loading { position: absolute; top: 16px; l
 .map .maplibregl-ctrl-bottom-right > .maplibregl-ctrl { float: none; flex: none; }
 
 /* ---------------------------------------------------------------- 防疫公告 (health-bureau notices) */
+.switch:has(.switch-input:disabled) { opacity: 0.5; cursor: not-allowed; }
 .btn-sm { height: 30px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
 .al-chip {
   position: absolute; z-index: 15; top: 14px; left: 50%; transform: translateX(-50%);

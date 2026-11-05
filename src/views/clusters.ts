@@ -15,7 +15,7 @@ import type { View, ViewContext } from './types';
 import { AlertLayers, alertBBox, alertHistory, alertSection, loadActiveAlerts, openAlertDialog, withAlerts } from './alerts';
 import { isAlertId, loadAlertById, type DengueAlert } from '../lib/alerts';
 import { at } from './alertsText';
-import { loadingBlock, panel, section, unavailableState } from './ui';
+import { loadingBlock, panel, section, toggle, unavailableState } from './ui';
 import { isUnavailable } from '../lib/warnings';
 
 const L = { towns: 'dm-c-towns', townsLine: 'dm-c-towns-line', fill: 'dm-cl-fill', line: 'dm-cl-line', pt: 'dm-cl-pt' };
@@ -119,7 +119,9 @@ export default async function clustersView(ctx: ViewContext): Promise<View> {
   }
   const wanted = isAlertId(ctx.params.notice) ? ctx.params.notice : null;
   // Health-bureau notices first: they usually precede the CDC cluster polygons.
-  if (notices.length) pnl.body.append(alertSection(notices, (a) => openNotice(a)));
+  if (notices.length) {
+    pnl.body.append(alertSection(notices, (a) => openNotice(a), toggle(at('showLayer'), true, (on) => alertLayers?.setVisible(on), 'alert')));
+  }
   pnl.body.append(alertHistory((id) => void showNotice(id), wanted));
   const summary = sumRes.status === 'fulfilled' ? sumRes.value : null;
   const bboxes: (BBox | null)[] = clusters?.features.map((f) => bboxOf(f.geometry)) ?? [];
