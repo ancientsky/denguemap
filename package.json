@@ -36,12 +36,12 @@
     "@types/topojson-specification": "1.0.5",
     "i18n-iso-countries": "7.14.0",
     "lz-string": "1.5.0",
-    "playwright-core": "1.64.1",
+    "playwright-core": "1.65.0",
     "taiwan-atlas": "2021.9.20",
     "topojson-server": "3.0.1",
     "topojson-simplify": "3.0.3",
     "typescript": "7.0.2",
-    "vite": "8.3.5",
+    "vite": "8.3.7",
     "vitest": "5.1.0",
     "world-atlas": "2.0.2"
   }
