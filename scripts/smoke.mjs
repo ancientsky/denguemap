@@ -32,7 +32,9 @@ const PASSES = list('SMOKE_PASSES', ['matrix', 'interact', 'period', 'zoom', 'an
 const run = (name) => PASSES.includes(name);
 const ALLOWED = /tiles\.openfreemap\.org/;
 // The notices file is fetched after a view has mounted: leaving the page right away aborts it, which is harmless.
-const benignAbort = (req) => /\/data\/alerts\.json/.test(req.url()) && /ERR_ABORTED/.test(req.failure()?.errorText ?? '');
+// A navigation cancels requests still in flight (ERR_ABORTED): the notices file and lazily loaded chunks of the
+// view being left. A missing or broken file still fails through the HTTP status check below.
+const benignAbort = (req) => /\/denguemap\/(data\/alerts\.json|assets\/[\w-]+\.js)(\?|$)/.test(req.url()) && /ERR_ABORTED/.test(req.failure()?.errorText ?? '');
 // SMOKE_DATA=<dir>: serve /denguemap/data/* from another directory (e.g. .fixtures/data) without touching public/data.
 const DATA_DIR = process.env.SMOKE_DATA ? join(process.cwd(), process.env.SMOKE_DATA) : null;
 async function prepare(ctx) {
