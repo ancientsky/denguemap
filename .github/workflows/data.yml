@@ -70,6 +70,9 @@ jobs:
           DATA_WEATHER_HISTORY: ${{ inputs.weather_history && '1' || '' }}
           # CWA open-data key: only sent to opendata.cwa.gov.tw in the Authorization header, never logged
           CWA_KEY: ${{ secrets.CWA }}
+          # Taiwan CDC open data re-published by the uploader in Taiwan (tools/opendata-uploader); a repository
+          # variable OPENDATA_URL overrides it. Missing / stale / broken = not used (the backend alone, as before).
+          OPENDATA_URL: ${{ vars.OPENDATA_URL || 'https://github.com/ancientsky/dengue-opendata/releases/download/latest/Dengue_Daily.csv.gz' }}
         run: npm run data
 
       - name: Commit data

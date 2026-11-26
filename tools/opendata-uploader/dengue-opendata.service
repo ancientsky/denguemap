@@ -1,0 +1,11 @@
+[Unit]
+Description=Upload Taiwan CDC dengue open data for denguemap
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# GH_TOKEN=... (and optionally DENGUE_OPENDATA_REPO=owner/repo); readable by you only (chmod 600)
+EnvironmentFile=%h/.config/dengue-opendata/env
+ExecStart=%h/.local/bin/dengue-opendata-upload.sh
+Nice=10

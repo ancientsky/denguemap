@@ -9,6 +9,8 @@ import {
 import {
   mergeByMonth, recentMonths, ShrinkError, shrinksBelow,
 } from '../validate.mjs';
+import { OPENDATA_COUNTRY_ALIASES, OPENDATA_FIRST_IMPORTED_YEAR } from '../config.mjs';
+import { opendataImportedRecords } from './opendata.mjs';
 
 /**
  * @typedef {object} ImportedRow
@@ -152,6 +154,49 @@ export function buildImported(rows, todayIso) {
 }
 
 /**
+ * Union of the backend's rows with the open data's imported cases: per (onset day, country) the larger count.
+ * The open data has country names only; they are matched to the backend's (and the committed file's) names,
+ * with a few known spelling differences.  Unknown names are left out (counted in `unmapped`).
+ * @param {ImportedRow[]} rows backend rows
+ * @param {Array<{sickdate:string, country_name:string, count:number}>} odRecords
+ * @param {Record<string, any>|undefined} committedCountries
+ * @returns {{rows:ImportedRow[], added:number, unmapped:Record<string, number>}}
+ */
+export function unionImported(rows, odRecords, committedCountries) {
+  /** @type {Map<string, {cc:string, zh:string, lat:number|null, lng:number|null}>} */
+  const byName = new Map();
+  for (const [cc, c] of Object.entries(committedCountries ?? {})) {
+    if (typeof c?.zh === 'string') byName.set(c.zh, { cc, zh: c.zh, lat: typeof c.lat === 'number' ? c.lat : null, lng: typeof c.lng === 'number' ? c.lng : null });
+  }
+  for (const r of rows) byName.set(r.zh, { cc: r.cc, zh: r.zh, lat: r.lat, lng: r.lng });
+  /** @type {Map<string, {row:ImportedRow, back:number, od:number}>} */
+  const m = new Map();
+  for (const r of rows) {
+    const k = `${r.date}|${r.cc}`;
+    const e = m.get(k);
+    if (e) e.back += r.count; else m.set(k, { row: r, back: r.count, od: 0 });
+  }
+  /** @type {Record<string, number>} */
+  const unmapped = {};
+  for (const r of odRecords) {
+    const p = parseYmd(r.sickdate);
+    const name = /** @type {Record<string,string>} */ (OPENDATA_COUNTRY_ALIASES)[r.country_name] ?? r.country_name;
+    const meta = byName.get(name);
+    if (!p || !meta) { unmapped[r.country_name] = (unmapped[r.country_name] ?? 0) + r.count; continue; }
+    const date = `${String(p.y).padStart(4, '0')}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
+    const k = `${date}|${meta.cc}`;
+    const e = m.get(k);
+    if (e) e.od += r.count; else m.set(k, { row: { date, ...meta, count: 0 }, back: 0, od: r.count });
+  }
+  let added = 0;
+  const out = [...m.values()].map((e) => {
+    added += Math.max(0, e.od - e.back);
+    return { ...e.row, count: Math.max(e.back, e.od) };
+  });
+  return { rows: out, added, unmapped };
+}
+
+/**
  * What the committed imported.json offers for a per-year merge.
  * @param {any} file parsed imported.json (or null)
  * @returns {{countries:Record<string,any>, yearCounts:Map<number,number>, events:Ev[]|null}|null}
@@ -184,6 +229,7 @@ export function readCommittedImported(file) {
  * @property {boolean} [allowShrink]
  * @property {readonly number[]} [retryDelays]
  * @property {(ms:number)=>Promise<void>} [sleep]
+ * @property {import('./opendata.mjs').Opendata|null} [opendata]  merged per (day, country) from 2023 on
  */
 
 /**
@@ -206,10 +252,20 @@ export async function buildImportedSource(ctx, opts = {}) {
   /** rows of the last attempt per year (a still-rejected year is merged month by month from them) */
   /** @type {Map<number, ImportedRow[]>} */
   let lastByYear = new Map();
+  const odRecords = opts.opendata ? opendataImportedRecords(opts.opendata, OPENDATA_FIRST_IMPORTED_YEAR) : null;
+  let odAdded = 0;
+  /** @type {Record<string, number>} */
+  let odUnmapped = {};
   for (let attempt = 1; ; attempt++) {
     const raw = await ctx.http.asmx('GetImportedData', {});
     const norm = normalizeImported(raw);
     if (norm.rows.length === 0) throw new Error('GetImportedData returned no usable records');
+    if (odRecords) {
+      const u = unionImported(norm.rows, odRecords, com?.countries);
+      norm.rows = u.rows;
+      odAdded = u.added;
+      odUnmapped = u.unmapped;
+    }
     dropped = norm.dropped;
     input = Array.isArray(raw) ? raw.length : 0;
     /** @type {Map<number, ImportedRow[]>} */
@@ -302,6 +358,7 @@ export async function buildImportedSource(ctx, opts = {}) {
       acceptedYears,
       changedYears,
       keptMonths: keptOut,
+      opendata: opts.opendata ? { newestJudged: opts.opendata.newestJudged, added: odAdded, unmapped: odUnmapped } : null,
       // up to date when the recent months came from upstream
       currentYearOk: !keptMonths.some((k) => recentMonths(ctx.todayIso).some((r) => r.y === k.year && k.months.includes(r.m))),
       rejected: keptYears.map((y) => {

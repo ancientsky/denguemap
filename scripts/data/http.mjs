@@ -71,16 +71,17 @@ function cookieValue(cookies, name) {
 }
 
 /**
- * Read a Response body as text with a hard byte cap.
+ * Read a Response body with a hard byte cap.
  * @param {Response} res
  * @param {number} maxBytes
+ * @returns {Promise<Buffer>}
  */
-export async function readCapped(res, maxBytes) {
+export async function readCappedBytes(res, maxBytes) {
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
     throw new HttpError(`response too large (content-length ${declared})`);
   }
-  if (!res.body) return '';
+  if (!res.body) return Buffer.alloc(0);
   const reader = res.body.getReader();
   /** @type {Uint8Array[]} */
   const chunks = [];
@@ -95,7 +96,16 @@ export async function readCapped(res, maxBytes) {
     }
     chunks.push(value);
   }
-  return new TextDecoder('utf-8').decode(Buffer.concat(chunks));
+  return Buffer.concat(chunks);
+}
+
+/**
+ * Read a Response body as text with a hard byte cap.
+ * @param {Response} res
+ * @param {number} maxBytes
+ */
+export async function readCapped(res, maxBytes) {
+  return new TextDecoder('utf-8').decode(await readCappedBytes(res, maxBytes));
 }
 
 /** @param {HttpClientOptions} opts */

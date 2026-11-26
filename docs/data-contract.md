@@ -251,6 +251,16 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 - **排程改為每小時**（`23 * * * *`），增加碰到完整資料的機會；GitHub 在尖峰時本來就會略過不少排程。
 - 診斷探測改為探測實際被拒的「年份 × 類型」（優先當年），不再固定探測本土。
 
+## v7 增補（2026-11-26）：疾管署開放資料（Dengue_Daily.csv）
+
+疾管署開放資料比原網站後端完整。例如 2023 年 9 月本土病例：開放資料 9,233 例，本站原本只有 7,606 例。這段資料是本站第一次複製歷史時，後端正好缺漏所致。開放資料只允許台灣 IP 下載，所以由台灣的電腦定時上傳到 `ancientsky/dengue-opendata` 的 `latest` release（見 `tools/opendata-uploader/README.md`），管線透過 `OPENDATA_URL` 讀取；本機也可用 `OPENDATA_FILE=…/Dengue_Daily.csv` 讀檔。
+
+- **新鮮度與完整性**：上傳器每次成功都更新 `Dengue_Daily.meta.json`（`downloadedAt`、`sha256`、`lines`）。管線在以下情況不使用開放資料，退回只用後端：下載時間超過 3 天、CSV 的 SHA-256 與 meta 不符、資料最新研判日超過 45 天、轉址到 GitHub 以外的主機、少於 10 萬列。沒有發布時輸出 notice；過期或損壞時輸出 warning。
+- **病例點位（2021 年起）**：開放資料的「最小統計區中心點」與後端座標相同，因此逐點合併。每個（發病日、本土／境外、點位）取兩者中較大的病例數，任一邊缺的病例都補上，兩邊都有的只算一次。合併發生在逐年接受檢查**之前**，所以後端有缺口時不會被判定為縮水，也不會重試。凍結年份（2021–當年−2）也會合併，等於一次性補齊歷史，之後只會增加。2020 年以前開放資料沒有座標，仍只用後端。
+- **境外移入（2023 年起）**：開放資料只有國名，以後端／已提交檔案的國名對應國碼（`印尼`、`中國`、`孟加拉國` 三個別名另外對照）。每個（發病日、國家）取較大值；對不到的國名略過並記錄於 `opendata.unmapped`。
+- 沒有座標的病例（2026 年約 8 例）不會出現在點位地圖，與後端一致。
+- 不發布個案層級的通報日、研判日、年齡、性別；通報延遲只用於預測模型的參數估計（`docs/forecast.md`）。
+
 ### 診斷（不入庫）
 
 每個 asmx 請求都記錄狀態碼、耗時、位元組、回應 `Date`、`Server`／`X-Powered-By`，以及 `ARRAffinity` cookie 值的 8 碼雜湊（絕不輸出 cookie 本身）。任何年份被拒時執行一次探測：對被截斷的一年再發 4 次本土 `GetDengueLocation`（每次新連線 `Connection: close`、不帶 cookie、間隔 5 秒），外加每個已見過的實例各 1 次（帶回該實例的 cookie，最多 4 個），並把表格（attempt／instance／year／records／cases／truncated）與一句結論（「truncation correlates with instance X」／「all instances truncated → data-state issue upstream」／…）以及一行 JSON 健康紀錄寫入 `$GITHUB_STEP_SUMMARY`。這些資訊不寫入 repo。

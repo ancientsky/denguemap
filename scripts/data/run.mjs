@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   DEFAULT_BASE_URL, DEFAULT_TRAVEL_BASE_URL, REFERENCE_COUNTS, SHRINK_RETRY_DELAYS_MS, SOURCE_NAMES, TRAVEL_MAX_BYTES,
 } from './config.mjs';
+import { loadOpendata } from './sources/opendata.mjs';
 import { PROBE_DELAY_MS, probeUpstream, renderProbe } from './diagnostics.mjs';
 import { loadGeo } from './geo.mjs';
 import { createHttp } from './http.mjs';
@@ -79,6 +80,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
  * @param {string[]} [options.only] restrict to these source names (debug)
  * @param {string} [options.cwaKey] CWA open-data key (default env CWA_KEY)
  * @param {boolean} [options.weatherHistory] re-fetch the weather history (default env DATA_WEATHER_HISTORY=1)
+ * @param {string|null} [options.opendataUrl] the open-data release asset (default env OPENDATA_URL; unset = not used)
+ * @param {string|null} [options.opendataFile] a local Dengue_Daily.csv(.gz) instead (default env OPENDATA_FILE)
+ * @param {number} [options.opendataMinRows] (tests) smallest acceptable open-data file
  */
 export async function run(options = {}) {
   const log = options.log ?? ((m) => console.log(m));
@@ -128,8 +132,21 @@ export async function run(options = {}) {
     }
   };
 
+  // Taiwan CDC open data (optional): merged into cases (2021+) and imported (2023+)
+  const opendataP = wanted('cases') || wanted('imported')
+    ? loadOpendata({
+      url: options.opendataUrl !== undefined ? options.opendataUrl : (process.env.OPENDATA_URL || null),
+      file: options.opendataFile !== undefined ? options.opendataFile : (process.env.OPENDATA_FILE || null),
+      fetchImpl: options.fetchImpl,
+      todayIso,
+      log,
+      minRows: options.opendataMinRows,
+    })
+    : Promise.resolve(null);
+
   const casesP = wanted('cases') ? guarded('cases', async (ctx) => {
     const out = await buildCases(ctx, {
+      opendata: await opendataP,
       full,
       allowShrink,
       reference: options.reference === undefined ? REFERENCE_COUNTS : options.reference,
@@ -146,7 +163,9 @@ export async function run(options = {}) {
   }) : null;
 
   const importedP = wanted('imported') ? guarded('imported', async (ctx) => {
-    const out = await buildImportedSource(ctx, { committed: await readJson(outDir, 'imported.json'), allowShrink, retryDelays });
+    const out = await buildImportedSource(ctx, {
+      committed: await readJson(outDir, 'imported.json'), allowShrink, retryDelays, opendata: await opendataP,
+    });
     validateImported(out.meta, null);
     return out;
   }) : null;
@@ -395,6 +414,10 @@ async function writeSummary(path, results, manifest, changed, prevManifest, toda
     lines.push('', `Data-quality warnings (${manifest.warnings.length}):`, ...manifest.warnings.map((/** @type {any} */ w) => `- \`${JSON.stringify(w)}\``));
   }
   if (manifest) lines.push('', `latest onset: ${manifest.latestOnset}, years: ${manifest.years[0]}..${manifest.years.at(-1)}`);
+  const od = results.cases?.meta?.opendata ?? results.imported?.meta?.opendata;
+  lines.push('', od
+    ? `Open data: newest confirmation ${od.newestJudged}; cases added beyond the backend: ${results.cases?.meta?.opendata?.added ?? '-'} (points), ${results.imported?.meta?.opendata?.added ?? '-'} (imported)`
+    : 'Open data: not used (OPENDATA_URL unset, not published, broken or stale)');
   if (diag.probe) lines.push(renderProbe(diag.probe.rows, diag.probe.verdict));
   // one compact health record per run (kept in the step summary only, never committed)
   const asmx = diag.http.diag;

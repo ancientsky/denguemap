@@ -108,3 +108,25 @@ export const SOURCE_NAMES = /** @type {const} */ (['cases', 'imported', 'notices
 export const ACTIVE_YEAR_SPAN = 2;
 /** Delays (ms) between re-fetches of rejected years / imported data (default; tests pass [0, 0]). */
 export const SHRINK_RETRY_DELAYS_MS = Object.freeze([90_000, 180_000]);
+
+/**
+ * Taiwan CDC open data (Dengue_Daily.csv) as re-published by a scheduled uploader on a computer in Taiwan
+ * (od.cdc.gov.tw only answers Taiwanese IPs): a gzipped copy attached to a GitHub release.  The pipeline reads
+ * it only when OPENDATA_URL (or OPENDATA_FILE, a local .csv / .csv.gz) is set; see tools/opendata-uploader.
+ */
+export const OPENDATA_ALLOWED_HOSTS = Object.freeze(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
+/** compressed / decompressed size caps */
+export const OPENDATA_MAX_BYTES = 30 * 1024 * 1024;
+export const OPENDATA_MAX_TEXT_BYTES = 200 * 1024 * 1024;
+/** fewer rows than this means a broken download */
+export const OPENDATA_MIN_ROWS = 100_000;
+/** ignored when the uploader last downloaded it more than this many days ago (it stopped) */
+export const OPENDATA_MAX_AGE_DAYS = 3;
+/** ignored when its newest confirmation date is older than this (a broken or frozen file) */
+export const OPENDATA_MAX_CONTENT_AGE_DAYS = 45;
+/** case points: the open data has coordinates from this year on */
+export const OPENDATA_FIRST_POINT_YEAR = 2021;
+/** imported.json starts in 2023 (GetImportedData) */
+export const OPENDATA_FIRST_IMPORTED_YEAR = 2023;
+/** country names of the open data that differ from GetImportedData's */
+export const OPENDATA_COUNTRY_ALIASES = Object.freeze({ 印尼: '印度尼西亞(印尼)', 中國: '中國大陸', 孟加拉國: '孟加拉' });

@@ -5,8 +5,9 @@
  * summary.json.
  */
 import {
-  ACTIVE_YEAR_SPAN, BBOX, CONCURRENCY, FIRST_YEAR, REFERENCE_COUNTS,
+  ACTIVE_YEAR_SPAN, BBOX, CONCURRENCY, FIRST_YEAR, OPENDATA_FIRST_POINT_YEAR, REFERENCE_COUNTS,
 } from '../config.mjs';
+import { opendataLocationRecords } from './opendata.mjs';
 import {
   cmp, dayOfYear, daysFromIso, daysFromYmd, isoFromDays, mapLimit, parseYmd, round5, sameDayLastYear, toJson, ymd,
 } from '../util.mjs';
@@ -283,6 +284,33 @@ export function rowsFromYearFile(file) {
 const sumCounts = (/** @type {CaseRow[]} */ rows) => rows.reduce((a, r) => a + r.count, 0);
 
 /**
+ * Point-by-point union of two row sets: per (date, type, point) the larger of the two counts.  Used to merge the
+ * backend with the open data, which share their points from 2021 on: a case missing from either one is kept, a
+ * case present in both is counted once.
+ * @param {CaseRow[]} a @param {CaseRow[]} b
+ * @returns {CaseRow[]}
+ */
+export function unionMax(a, b) {
+  const byKey = (/** @type {CaseRow[]} */ rows) => {
+    /** @type {Map<string, CaseRow>} */
+    const m = new Map();
+    for (const r of rows) {
+      const k = `${r.date}|${r.imp}|${r.lng}|${r.lat}`;
+      const e = m.get(k);
+      if (e) e.count += r.count; else m.set(k, { ...r });
+    }
+    return m;
+  };
+  const out = byKey(a);
+  for (const [k, r] of byKey(b)) {
+    const e = out.get(k);
+    if (!e) out.set(k, r);
+    else if (r.count > e.count) e.count = r.count;
+  }
+  return [...out.values()];
+}
+
+/**
  * Years that are fetched on a normal run: the current year and the one before.
  * @param {number} currentYear
  */
@@ -296,6 +324,7 @@ export const isActiveYear = (currentYear, /** @type {number} */ y) => y > curren
  * @property {readonly number[]} [retryDelays]  waits before re-fetching rejected (year, type) pairs
  * @property {(ms:number)=>Promise<void>} [sleep]
  * @property {(rel:string)=>Promise<string|null>} readCommitted  text of a committed data file
+ * @property {import('./opendata.mjs').Opendata|null} [opendata]  merged point by point from OPENDATA_FIRST_POINT_YEAR on
  */
 
 /**
@@ -346,8 +375,11 @@ export async function buildCases(ctx, opts) {
   /** @type {Array<{y:number, imp:0|1}>} */
   let pending = fetchYears.flatMap((y) => /** @type {const} */ ([0, 1]).map((imp) => ({ y, imp })));
   const maxAttempts = 1 + retryDelays.length;
-  let requests = 0;
+  let requests = 0, odAdded = 0;
   const t0 = Date.now();
+  const od = opts.opendata ?? null;
+  const odRows = (/** @type {number} */ y, /** @type {0|1} */ imp) => (od && y >= OPENDATA_FIRST_POINT_YEAR
+    ? normalizeRecords(opendataLocationRecords(od, y, imp), { year: y, imp, todayIso }).rows : null);
   for (let attempt = 1; ; attempt++) {
     const results = await mapLimit(pending, CONCURRENCY, async ({ y, imp }) => {
       const end = y === curYear ? todayIso.replaceAll('-', '/') : `${y}/12/31`;
@@ -356,7 +388,14 @@ export async function buildCases(ctx, opts) {
         const raw = await http.asmx('GetDengueLocation', {
           citycode: 'all', immigration: String(imp), startDate: `${y}/01/01`, endDate: end,
         });
-        return { y, imp, ok: /** @type {const} */ (true), ...normalizeRecords(raw, { year: y, imp, todayIso }) };
+        const n = normalizeRecords(raw, { year: y, imp, todayIso });
+        const extra = odRows(y, imp);
+        if (extra) {
+          const before = sumCounts(n.rows);
+          n.rows = unionMax(n.rows, extra);
+          odAdded += sumCounts(n.rows) - before;
+        }
+        return { y, imp, ok: /** @type {const} */ (true), ...n };
       } catch (e) {
         return { y, imp, ok: /** @type {const} */ (false), error: e instanceof Error ? e.message : String(e) };
       }
@@ -413,6 +452,20 @@ export async function buildCases(ctx, opts) {
     const c = committed.get(y);
     const mine = /** @type {const} */ ([0, 1]).map((imp) => accepted.get(`${y}|${imp}`));
     const shrunk = /** @type {const} */ ([0, 1]).map((imp) => Boolean(rejected.get(`${y}|${imp}`)?.rows));
+    if (!mine[0] && !mine[1] && !shrunk[0] && !shrunk[1] && c && !fetchYears.includes(y) && od && y >= OPENDATA_FIRST_POINT_YEAR) {
+      // frozen year covered by the open data: the committed points plus anything the open data has in addition
+      const old = rowsFromYearFile(c.file);
+      const rows = /** @type {const} */ ([0, 1]).flatMap((imp) => unionMax(old.filter((r) => r.imp === imp), /** @type {CaseRow[]} */ (odRows(y, imp))));
+      odAdded += sumCounts(rows) - sumCounts(old);
+      rowsByYear.set(y, rows);
+      const { file, nullTown: nt, uniquePts: up } = buildYearFile(rows, y, geo.locateTown);
+      const text = toJson(file);
+      nullTown += nt;
+      uniquePts += up;
+      totals[y] = yearTotals(file);
+      if (text !== c.text) { files[`cases/${y}.json`] = text; changedYears.push(y); }
+      continue;
+    }
     if (!mine[0] && !mine[1] && !shrunk[0] && !shrunk[1]) {
       // not fetched (frozen) or both fetches failed: reuse the committed file as it is
       const cc = /** @type {NonNullable<typeof c>} */ (c);
@@ -498,6 +551,7 @@ export async function buildCases(ctx, opts) {
       changedYears,
       keptYears: [...keptYears].sort((a, b) => a - b),
       keptMonths,
+      opendata: od ? { newestJudged: od.newestJudged, added: odAdded } : null,
       rejected: [...rejected.values()].map((r) => ({ year: r.y, type: typeName(r.imp), reason: r.reason, shrink: r.shrink })),
       currentYearOk,
     },
