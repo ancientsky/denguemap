@@ -280,7 +280,10 @@ export async function buildImportedSource(ctx, opts = {}) {
       acceptedYears,
       changedYears,
       currentYearOk: !rejected.has(curYear),
-      rejected: keptYears.map((y) => ({ year: y, ...(/** @type {any} */ (rejected.get(y))) })),
+      rejected: keptYears.map((y) => {
+        const r = /** @type {{got:number, committed:number}} */ (rejected.get(y));
+        return { year: y, ...r, reason: `${y}: ${r.got} < previous ${r.committed}` };
+      }),
     },
   };
 }
