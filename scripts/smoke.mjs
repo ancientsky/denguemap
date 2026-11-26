@@ -1158,6 +1158,11 @@ try {
   if (run('alerts')) {
     const label = 'alerts';
     const built = JSON.parse(readFileSync(join(process.cwd(), 'dist/data/alerts.json'), 'utf8'));
+    // once every real notice has ended (alerts.json drops them 7 days later) take the newest one from the history
+    if (!built.alerts.length) {
+      const index = JSON.parse(readFileSync(join(process.cwd(), 'dist/data/alerts-index.json'), 'utf8'));
+      if (index.alerts.length) built.alerts = [JSON.parse(readFileSync(join(process.cwd(), `dist/data/alerts/${index.alerts[0].id}.json`), 'utf8'))];
+    }
     const day = (n) => new Date(Date.now() + 8 * 3600_000 + n * 86_400_000).toISOString().slice(0, 10);
     const fixture = { ...built, alerts: built.alerts.slice(0, 1).map((a) => ({ ...a, issuedAt: day(-1), validUntil: day(10),
       screeningStations: a.screeningStations.map((st) => ({ ...st, dates: [day(0), day(1)] })) })) };
