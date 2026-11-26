@@ -1,5 +1,5 @@
 {
-  "dispersion": 0.5,
+  "dispersion": 0.2,
   "damping": 0.5,
   "rwSd": 0.2,
   "importedWeight": 0.5,
@@ -7,5 +7,10 @@
     "shape": 2,
     "scale": 0.5
   },
-  "tempGamma": 2
+  "tempGamma": 2,
+  "delay": {
+    "mean": 4.5,
+    "sd": 3.5,
+    "max": 28
+  }
 }
