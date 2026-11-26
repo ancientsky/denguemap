@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { it } from 'vitest';
 import { mergeCaseYears } from '../../src/lib/aggregate';
 import { epochDayOfDoy } from '../../src/lib/dates';
-import { completeness } from '../../src/lib/forecast/model';
+import { realCompleteness } from './delay.mjs';
 import { PARAMS } from '../../src/lib/forecast/params';
 import { snapshotAt } from '../../src/lib/forecast/snapshot';
 import { DEFAULT_SURFACE, riskSurface, surfacePoints } from '../../src/lib/forecast/surface';
@@ -43,11 +43,11 @@ const setFor = (year) => {
 /** Per origin: the surface inputs, the recent cases (baseline) and the next 14 days' actual local cases. */
 function origins(s) {
   const set = setFor(s.year);
-  const comp = completeness(PARAMS);
   const out = [];
   for (let doy = 152; doy <= 334; doy += 7) {
     const asOf = epochDayOfDoy(s.year, doy);
-    const snap = snapshotAt(set, asOf, asOf - 140, comp, 7);
+    // what was published by then: the real reporting delay of each onset month (tests/backtest/delay.json)
+    const snap = snapshotAt(set, asOf, asOf - 140, realCompleteness, 7);
     const inCounty = (pt) => !s.county || set.pts[pt]?.[2]?.slice(0, 5) === s.county;
     let recent28 = 0;
     const recent = [];
@@ -187,7 +187,7 @@ it('spatial backtest', () => {
   再依「自激點過程」的核心分配到 ${DEFAULT_SURFACE.cellM} 公尺網格：每個近期病例依其未來 14 天剩餘的感染力（世代間隔）加權，
   以兩種尺度的高斯核擴散（短距離 σ₁：病媒蚊與鄰里；長距離 σ₂：人的移動，占 ρ）；另有 β 比例放在本季較早期（−140～−29 天）的病例周圍（舊病例群復燃）。
 - **50%／90% 範圍**：依預估密度由高到低累加網格，涵蓋 50%／90% 預估病例的最小區域。
-- **回測**：與時間模型相同的預測日（6–11 月每週，近 28 天本土病例 ≥ ${PARAMS.minCases} 例，依假設通報延遲抽除未公布病例），
+- **回測**：與時間模型相同的預測日（6–11 月每週，近 28 天本土病例 ≥ ${PARAMS.minCases} 例，依各發病年月的實測通報延遲抽除未公布病例），
   檢查之後 14 天的實際本土病例是否落在 50%／90% 範圍內。
 - **基準**：在最近 14 天病例周圍畫圓，半徑取到與模型 90% 範圍**同面積**為止，比較涵蓋率（同面積下涵蓋越多越好）。
 - **對數分數**：實際病例所在網格的預估密度（每平方公里占比）取對數平均，越高越好；網格外以 ${FLOOR} 計。

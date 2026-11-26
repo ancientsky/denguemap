@@ -1,6 +1,7 @@
 // Rolling-origin backtest of the forecast model on past outbreaks (run: npm run backtest).
-// Each week from June to November, the data are cut at that day and thinned with the assumed reporting
-// delay (what would have been published by then); the forecast is compared with the final counts.
+// Each week from June to November, the data are cut at that day and thinned with the REAL reporting delay of
+// that year and month (Taiwan CDC open data, tests/backtest/delay.json: what would have been published by then);
+// the forecast is compared with the final counts. The model's own delay assumption is one of the tuned parameters.
 // Step 1 tunes four parameters on 2002/2014/2015 (grid search, relative WIS); step 2 scores the chosen
 // parameters on every series, including the 2023 outbreaks it never saw. Writes:
 //   src/lib/forecast/tuned.json     chosen parameters (read by the page)
@@ -11,7 +12,7 @@ import { it } from 'vitest';
 import { mergeCaseYears } from '../../src/lib/aggregate';
 import { epochDayOfDoy, isoFromEpochDay } from '../../src/lib/dates';
 import { covers, flatBaseline, wis } from '../../src/lib/forecast/evaluate';
-import { completeness, forecastArea } from '../../src/lib/forecast/model';
+import { forecastArea } from '../../src/lib/forecast/model';
 import { BASE_PARAMS } from '../../src/lib/forecast/params';
 import { countyCounts, seriesOf, snapshotAt, truthBlocks } from '../../src/lib/forecast/snapshot';
 import { tempFactors, tempPath } from '../../src/lib/forecast/weather';
@@ -20,6 +21,7 @@ const root = new URL('../../', import.meta.url);
 const loadYear = (y) => JSON.parse(readFileSync(new URL(`public/data/cases/${y}.json`, root), 'utf8'));
 // Weekly temperature since 2001 (NASA POWER bias-corrected to CWA station normals; docs/data-contract.md v4).
 const WEATHER = JSON.parse(readFileSync(new URL('public/data/weather.json', root), 'utf8'));
+import { DELAY, realCompleteness } from './delay.mjs';
 
 const SERIES = [
   { year: 2002, county: '64000', name: '2002 高雄', role: 'tune' },
@@ -44,6 +46,13 @@ const GRID = {
   prior: [{ shape: 2, scale: 0.5 }],
   // Temperature effect (weather.ts): 0 = none.
   tempGamma: [0, 1, 2, 3, 4],
+  // The model's reporting-delay assumption (days, onset → confirmation): the old guess / quiet years and early
+  // outbreak phase, a middle value, and the pooled measurement (mostly outbreak peaks).
+  delay: [
+    { mean: 6, sd: 4.4, max: 28 },
+    { mean: 4.5, sd: 3.5, max: 28 },
+    { mean: Math.round(DELAY.pooled.mean * 10) / 10, sd: Math.round(DELAY.pooled.sd * 10) / 10, max: 28 },
+  ],
 };
 // Forecast accuracy by outbreak size (local cases in the 28 days before the as-of day).
 const BUCKETS = [[10, 29], [30, 99], [100, 299], [300, Infinity]];
@@ -57,12 +66,11 @@ const setFor = (year) => {
 /** All forecasts of one series with parameters p: per origin, per horizon {q, truth, baseline}. */
 function runSeries(s, p) {
   const set = setFor(s.year);
-  const comp = completeness(p);
   const out = { scored: [], declined: [] };
   for (let doy = 152; doy <= 334; doy += 7) {
     const asOf = epochDayOfDoy(s.year, doy);
     const start = asOf - 140;
-    const snap = snapshotAt(set, asOf, start, comp, 7);
+    const snap = snapshotAt(set, asOf, start, realCompleteness, 7);
     const station = WEATHER.county[s.county ?? countyCounts(set, snap)[0]?.[0] ?? ''];
     const factors = tempFactors(tempPath(WEATHER, station, asOf, p.horizon), p.tempGamma, p.horizon);
     const f = forecastArea(seriesOf(set, snap, s.county, start), p, p.seed ^ doy, factors);
@@ -121,6 +129,9 @@ function score(p) {
   return { score: rel.reduce((a, b) => a + b, 0) / rel.length, cov90 };
 }
 const MIN_COVERAGE_90 = 0.85;
+function poolWithLater(params, role) {
+  return summarise({ scored: SERIES.filter((s) => s.role === role).flatMap((s) => runSeries(s, params).scored) });
+}
 
 const priorName = (p) => `gamma(形狀 ${p.shape}, 尺度 ${p.scale})，平均 ${p.shape * p.scale}`;
 const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`);
@@ -129,20 +140,27 @@ const num = (v, d = 2) => (v == null ? '—' : v.toFixed(d));
 it('backtest', () => {
   // ---- 1. tune
   const trials = [];
-  for (const dispersion of GRID.dispersion) for (const damping of GRID.damping) for (const rwSd of GRID.rwSd) for (const importedWeight of GRID.importedWeight) for (const prior of GRID.prior) for (const tempGamma of GRID.tempGamma) {
-    const p = { ...BASE_PARAMS, sims: 300, dispersion, damping, rwSd, importedWeight, prior, tempGamma };
-    trials.push({ dispersion, damping, rwSd, importedWeight, prior, tempGamma, ...score(p) });
+  for (const dispersion of GRID.dispersion) for (const damping of GRID.damping) for (const rwSd of GRID.rwSd) for (const importedWeight of GRID.importedWeight) for (const prior of GRID.prior) for (const tempGamma of GRID.tempGamma) for (const delay of GRID.delay) {
+    const p = { ...BASE_PARAMS, sims: 300, dispersion, damping, rwSd, importedWeight, prior, tempGamma, delay };
+    trials.push({ dispersion, damping, rwSd, importedWeight, prior, tempGamma, delay, ...score(p) });
   }
   // Best WIS among the parameter sets whose 90 % intervals are honest enough; else the best-covered one.
   trials.sort((a, b) => a.score - b.score);
   const best = trials.find((x) => x.cov90 >= MIN_COVERAGE_90) ?? [...trials].sort((a, b) => b.cov90 - a.cov90)[0];
-  const tuned = { dispersion: best.dispersion, damping: best.damping, rwSd: best.rwSd, importedWeight: best.importedWeight, prior: best.prior, tempGamma: best.tempGamma };
+  const tuned = { dispersion: best.dispersion, damping: best.damping, rwSd: best.rwSd, importedWeight: best.importedWeight, prior: best.prior, tempGamma: best.tempGamma, delay: best.delay };
   const P = { ...BASE_PARAMS, ...tuned };
   // Does temperature help? The best parameter set without it (same coverage rule), scored on every role.
   const noTemp = trials.filter((x) => x.tempGamma === 0);
   const bestNoTemp = noTemp.find((x) => x.cov90 >= MIN_COVERAGE_90) ?? [...noTemp].sort((a, b) => b.cov90 - a.cov90)[0];
-  const P0 = { ...BASE_PARAMS, dispersion: bestNoTemp.dispersion, damping: bestNoTemp.damping, rwSd: bestNoTemp.rwSd, importedWeight: bestNoTemp.importedWeight, prior: bestNoTemp.prior, tempGamma: 0 };
-  const poolWith = (params, role) => summarise({ scored: SERIES.filter((s) => s.role === role).flatMap((s) => runSeries(s, params).scored) });
+  const P0 = { ...BASE_PARAMS, dispersion: bestNoTemp.dispersion, damping: bestNoTemp.damping, rwSd: bestNoTemp.rwSd, importedWeight: bestNoTemp.importedWeight, prior: bestNoTemp.prior, tempGamma: 0, delay: bestNoTemp.delay };
+  // Does the measured delay help? The best set with each delay candidate (same coverage rule), scored on every role.
+  const delayCompare = GRID.delay.map((d) => {
+    const ts = trials.filter((x) => x.delay === d);
+    const b = ts.find((x) => x.cov90 >= MIN_COVERAGE_90) ?? [...ts].sort((a, c) => c.cov90 - a.cov90)[0];
+    const pd = { ...BASE_PARAMS, dispersion: b.dispersion, damping: b.damping, rwSd: b.rwSd, importedWeight: b.importedWeight, prior: b.prior, tempGamma: b.tempGamma, delay: d };
+    return { delay: d, score: b.score, cov90: b.cov90, roles: ['tune', 'holdout', 'small'].map((role) => ({ role, perH: poolWithLater(pd, role) })) };
+  });
+  const poolWith = poolWithLater;
   const tempCompare = ['tune', 'holdout', 'small'].map((role) => ({ role, without: poolWith(P0, role), with: poolWith(P, role) }));
 
   // ---- 2. evaluate every series with the chosen parameters
@@ -184,7 +202,7 @@ it('backtest', () => {
 
 - **資料**：本站 \`public/data/cases/{年}.json\` 的本土／境外移入病例（發病日、最小統計區座標）。
 - **回測方式**：每年 6 月 1 日至 11 月 30 日，每 7 天當作一次「預測當日」；只使用發病日在當日以前的病例，
-  並以假設的通報延遲（gamma 分布，平均 ${BASE_PARAMS.delay.mean} 天、標準差 ${BASE_PARAMS.delay.sd} 天）隨機抽除尚未公布的病例，模擬當時實際看得到的資料。
+  並依**實測的通報延遲**（疾管署開放資料：發病日 → 個案研判日，依發病年月；${DELAY.firstYear} 年以前的研判日是補登日期，改用 ${DELAY.firstYear} 年後合併分布）隨機抽除尚未公布的病例，模擬當時實際看得到的資料。
   與最終（完整）資料的每 7 天病例數比較。
 - **模型**：renewal model（世代間隔 gamma 平均 ${BASE_PARAMS.gi.mean} 天、標準差 ${BASE_PARAMS.gi.sd} 天），境外移入病例只當感染源（權重 α），
   Rt 以近 ${BASE_PARAMS.rtWindow} 天的 Poisson 概似（考慮通報完整度）求 gamma 事後分布；預測時 R 逐週向 1 收斂（φ）並加上對數隨機漫步（σ），每日病例為負二項分布（k）。
@@ -202,6 +220,7 @@ it('backtest', () => {
 | 境外移入感染力權重 α | ${tuned.importedWeight} | 固定值（未調參） |
 | R 事前分布 | ${priorName(tuned.prior)} | 病例少時事前分布影響較大 |
 | 氣溫效果強度 γ | ${tuned.tempGamma} | 0 = 不使用氣溫；R × (相對 R0(未來氣溫) ÷ 相對 R0(近 14 天氣溫))^γ |
+| 模型的通報延遲 | 平均 ${tuned.delay.mean} 天、標準差 ${tuned.delay.sd} 天 | 用來補正最近幾天尚未研判的病例（候選：${GRID.delay.map((d) => `${d.mean}／${d.sd}`).join('、')}） |
 
 選參規則：第 1–4 週 90% 預測區間的合併涵蓋率都要達 ${pct(MIN_COVERAGE_90)}（WIS 本身會偏好過窄的區間），符合者中取平均相對 WIS 最低的一組。
 
@@ -212,6 +231,16 @@ WIS 前 5 名（分數 = 平均相對 WIS，不論涵蓋率）：
 ${trials.slice(0, 5).map((x) => `| ${x.dispersion} | ${x.damping} | ${x.rwSd} | ${x.tempGamma} | ${num(x.score, 3)} | ${pct(x.cov90)} |`).join('\n')}
 
 符合涵蓋率條件的最佳組合（即選定參數）：k ${best.dispersion}、φ ${best.damping}、σ ${best.rwSd}，分數 ${num(best.score, 3)}，90% 區間最低涵蓋率 ${pct(best.cov90)}。
+
+## 通報延遲
+
+疾管署開放資料（${DELAY.firstYear} 年起本土病例 ${DELAY.pooled.n.toLocaleString('en-US')} 例）的發病到研判天數：合併平均 ${DELAY.pooled.mean} 天、標準差 ${DELAY.pooled.sd} 天。
+平靜年份與流行初期約 6 天，流行高峰縮短到 2–4 天（例如 2015 年 7 月 ${DELAY.byMonth['2015-07']?.mean ?? '—'} 天 → 10 月 ${DELAY.byMonth['2015-10']?.mean ?? '—'} 天；2023 年 6 月 ${DELAY.byMonth['2023-06']?.mean ?? '—'} 天 → 9 月 ${DELAY.byMonth['2023-09']?.mean ?? '—'} 天）。
+回測資料依各發病年月的實測分布抽除病例；模型本身用一個固定分布補正，候選值的比較（各自在涵蓋率條件下的最佳組合，相對 WIS 第 1／2／3／4 週；本週補正另列）：
+
+| 模型延遲（平均／標準差） | 調參分數 | 調參 | 驗證（2023） | 小規模 | 本週補正：調參／驗證 |
+|---|---|---|---|---|---|
+${delayCompare.map((c) => `| ${c.delay.mean}／${c.delay.sd} | ${num(c.score, 3)} | ${c.roles[0].perH.filter((x) => x.h >= 1).map((x) => num(x.relWis)).join('／')} | ${c.roles[1].perH.filter((x) => x.h >= 1).map((x) => num(x.relWis)).join('／')} | ${c.roles[2].perH.filter((x) => x.h >= 1).map((x) => num(x.relWis)).join('／')} | ${num(c.roles[0].perH[0].relWis)}／${num(c.roles[1].perH[0].relWis)} |`).join('\n')}
 
 ## 氣溫有沒有幫助？
 
@@ -253,8 +282,8 @@ ${table(s.perH)}`).join('\n\n')}
 
 ## 限制
 
-- **通報延遲是假設值**：來源資料沒有通報日，回測時用同一個假設分布抽除病例，所以「本週（補正）」的成績只代表模型在這個假設下的表現，
-  不能證明假設本身正確。取得通報日（或本站資料庫每 3 小時快照累積的「首次出現日」）後應重新估計並重跑回測。
+- **通報延遲**：回測資料依各發病年月的實測延遲抽除病例，但每例獨立抽樣，沒有重現「同一天大量研判」的批次效應；
+  2010 年以前的研判日不可用，2002 年改用 2010 年後合併分布。模型本身只用一個固定延遲分布，流行初期（延遲較長）的補正會偏低、高峰（延遲較短）會偏高。
 - 歷史資料已含後來補報與研判修正，與當時實際看到的資料仍有差異。
 - 模型假設防治強度與傳播條件維持近期水準，未納入氣象、病媒指數與人口移動；大規模防治介入或天候急遽變化時會偏離。
 - 預測單位為縣市；地圖上的方向與範圍是描述性統計（重心軌跡與共變異數橢圓），不是機率預測。

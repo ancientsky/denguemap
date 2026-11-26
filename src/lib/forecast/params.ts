@@ -9,7 +9,9 @@ export const BASE_PARAMS: ForecastParams = {
   // Dengue onset-to-onset interval: intrinsic incubation + viraemia + extrinsic incubation in the mosquito,
   // about 2–3 weeks.
   gi: { mean: 16, sd: 5, max: 40 },
-  // ASSUMPTION (no report dates in the source): onset → care → NS1/PCR confirmation → publication.
+  // Onset → confirmation (when a case appears in the data). Measured in the Taiwan CDC open data (2010+): about
+  // 6 days in quiet years and early in an outbreak, 2–4 days at an outbreak's peak (tests/backtest/delay.json).
+  // The backtest picks the model's value among candidates (tuned.json); this is the fallback.
   delay: { mean: 6, sd: 4, max: 28 },
   rtWindow: 14,
   prior: { shape: 1, scale: 5 },
@@ -24,7 +26,7 @@ export const BASE_PARAMS: ForecastParams = {
   seed: 20150801,
 };
 
-export type TunedParams = Pick<ForecastParams, 'dispersion' | 'damping' | 'rwSd' | 'importedWeight' | 'prior' | 'tempGamma'>;
+export type TunedParams = Pick<ForecastParams, 'dispersion' | 'damping' | 'rwSd' | 'importedWeight' | 'prior' | 'tempGamma' | 'delay'>;
 
 export const PARAMS: ForecastParams = { ...BASE_PARAMS, ...(tuned as Partial<TunedParams>) };
 

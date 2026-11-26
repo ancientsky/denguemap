@@ -17,11 +17,14 @@ export interface Snapshot {
   length: number;
 }
 
+/** Share of the cases with onset on `day` published `lag` days later (an array: the same for every onset day). */
+export type Completeness = Float64Array | ((day: number, lag: number) => number);
+
 /**
- * Rows of `set` with onset in [from, asOf]. With `completeness`, each row keeps Binomial(n, c[asOf − day])
+ * Rows of `set` with onset in [from, asOf]. With `completeness`, each row keeps Binomial(n, c(day, asOf − day))
  * cases (seeded): the cases that would already have been published on the as-of day.
  */
-export function snapshotAt(set: CaseSet, asOf: number, from: number, completeness: Float64Array | null, seed = 1): Snapshot {
+export function snapshotAt(set: CaseSet, asOf: number, from: number, completeness: Completeness | null, seed = 1): Snapshot {
   const r = rng(seed ^ asOf);
   const i0 = lowerBoundSet(set, from);
   const cap = Math.max(0, lowerBoundSet(set, asOf + 1) - i0);
@@ -31,7 +34,7 @@ export function snapshotAt(set: CaseSet, asOf: number, from: number, completenes
     let n = set.n[i]!;
     if (completeness) {
       const lag = asOf - d;
-      const c = lag >= completeness.length ? 1 : completeness[lag]!;
+      const c = typeof completeness === 'function' ? completeness(d, lag) : lag >= completeness.length ? 1 : completeness[lag]!;
       if (c < 1) n = binomial(r, n, c);
     }
     if (!n) continue;

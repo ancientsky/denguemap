@@ -1,6 +1,6 @@
 // #/forecast — 疫情預測 (internal, experimental, not in the menu). Renewal-model forecast of local cases per
 // area (src/lib/forecast/model.ts), descriptive direction/extent of the recent case groups (foci.ts), and a
-// replay mode that cuts the data at a past date and thins it with the assumed reporting delay, with the
+// replay mode that cuts the data at a past date and thins it with the model's reporting delay, with the
 // final data shown as "actual". ECharts comes from the same lazy chunk as the trends view.
 import { init, use, type ECharts } from 'echarts/core';
 import { BarChart, LineChart } from 'echarts/charts';
