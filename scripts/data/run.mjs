@@ -224,12 +224,15 @@ export async function run(options = {}) {
   const casesShrunk = results.cases?.ok ? results.cases.meta.rejected.filter((/** @type {any} */ r) => r.shrink) : [];
   const importedKept = results.imported?.ok ? results.imported.meta.keptYears : [];
   if (casesShrunk.length || importedKept.length) {
-    const year = casesShrunk[0]?.year ?? importedKept[0];
+    // probe what actually failed, the current year first
+    const pick = casesShrunk.find((/** @type {any} */ r) => r.year === currentYear) ?? casesShrunk[0];
+    const year = pick?.year ?? importedKept[0];
+    const imp = pick?.type === 'imported' ? 1 : 0;
     const committedFile = await readJson(outDir, `cases/${year}.json`);
-    const expected = committedFile ? yearTotals(committedFile).local : null;
-    log(`upstream probe for ${year} (local): cases rejected ${casesShrunk.map((/** @type {any} */ r) => `${r.year}/${r.type}`).join(', ') || '-'}; imported kept ${importedKept.join(', ') || '-'}`);
+    const expected = committedFile ? yearTotals(committedFile)[imp ? 'imported' : 'local'] : null;
+    log(`upstream probe for ${year} (${imp ? 'imported' : 'local'}): cases rejected ${casesShrunk.map((/** @type {any} */ r) => `${r.year}/${r.type}`).join(', ') || '-'}; imported kept ${importedKept.join(', ') || '-'}`);
     try {
-      probe = await probeUpstream({ baseUrl, fetchImpl: options.fetchImpl, http, year, expected, todayIso, delayMs: probeDelayMs, log });
+      probe = await probeUpstream({ baseUrl, fetchImpl: options.fetchImpl, http, year, imp, expected, todayIso, delayMs: probeDelayMs, log });
       log(`upstream probe verdict: ${probe.verdict}`);
     } catch (e) {
       log(`upstream probe failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -313,14 +316,18 @@ export async function run(options = {}) {
     log('manifest unchanged (no data hash or source flag changed)');
   }
 
+  // a warning only when the site is out of date; months kept from the committed data are a notice
   const failed = manifestResults.filter((r) => !srcOk(r));
   for (const f of failed) {
-    const why = f.error ?? (f.meta?.rejected ?? []).map((/** @type {any} */ x) => x.reason).join('; ');
-    log(`::warning::source ${f.name} failed, kept previous data: ${why}`);
+    if (f.error) log(`::warning::source ${f.name} failed, kept previous data: ${f.error}`);
+    else log(`::warning::source ${f.name}: recent months missing upstream, the current year was not refreshed (${(f.meta?.rejected ?? []).map((/** @type {any} */ x) => x.reason).join('; ')})`);
   }
   for (const n of /** @type {const} */ (['cases', 'imported'])) {
-    const k = results[n]?.ok ? results[n].meta.keptYears : [];
-    if (k.length) log(`::warning::source ${n} kept the committed data of year(s) ${k.join(', ')} (upstream below the committed counts)`);
+    const km = results[n]?.ok ? results[n].meta.keptMonths ?? [] : [];
+    if (km.length) {
+      const what = km.map((/** @type {any} */ k) => `${k.year}${k.type ? ` ${k.type}` : ''} ${monthRanges(k.months)}`).join('; ');
+      log(`::notice::source ${n} kept committed data for ${what} (missing upstream; the other months were updated)`);
+    }
   }
   log(`done: ${changed.length} file(s) changed${changed.length ? ` (${changed.join(', ')})` : ''}`);
   await writeSummary(summaryPath, results, manifest, changed, prevManifest, todayIso, { probe, http, full, now });
@@ -412,3 +419,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   );
 }
 
+/**
+ * "1–11", "3, 5–6" (months as ranges, for the run annotations)
+ * @param {number[]} months sorted 1-12
+ */
+export function monthRanges(months) {
+  /** @type {string[]} */
+  const out = [];
+  for (let i = 0; i < months.length; i++) {
+    let j = i;
+    while (j + 1 < months.length && months[j + 1] === months[j] + 1) j++;
+    out.push(j > i ? `${months[i]}–${months[j]}` : `${months[i]}`);
+    i = j;
+  }
+  return out.length ? `month ${out.join(', ')}` : '(none)';
+}

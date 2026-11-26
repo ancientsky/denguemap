@@ -41,6 +41,46 @@ export function shrinksBelow(total, base) {
 }
 
 /**
+ * Month-by-month merge for a (year, type) whose fetched total fell below the committed one.
+ *
+ * The backend loses whole blocks of dates while it reloads (e.g. Oct 2023 – Nov 2025 missing, everything
+ * else complete), so a shrunk year is usually made of complete months and missing months.  A month takes
+ * the fetched items when its count is not lower than the committed one (only the relative tolerance: the
+ * absolute slack of the year check would let a small month vanish); otherwise the committed items of that
+ * month are kept.  Small genuine decreases inside such a year wait for a run where the year passes as a
+ * whole, which replaces it entirely.
+ * @template T
+ * @param {readonly T[]} fetched @param {readonly T[]} committed
+ * @param {(x:T)=>number} monthOf 1-12 @param {(x:T)=>number} countOf
+ * @returns {{items:T[], keptMonths:number[]}}
+ */
+export function mergeByMonth(fetched, committed, monthOf, countOf) {
+  const sums = (/** @type {readonly T[]} */ list) => {
+    /** @type {Map<number, number>} */
+    const m = new Map();
+    for (const x of list) m.set(monthOf(x), (m.get(monthOf(x)) ?? 0) + countOf(x));
+    return m;
+  };
+  const f = sums(fetched), c = sums(committed);
+  /** @type {Set<number>} */
+  const kept = new Set();
+  for (const [m, was] of c) if ((f.get(m) ?? 0) < was - Math.floor(was * SHRINK_TOLERANCE.rel)) kept.add(m);
+  return {
+    items: [...fetched.filter((x) => !kept.has(monthOf(x))), ...committed.filter((x) => kept.has(monthOf(x)))],
+    keptMonths: [...kept].sort((a, b) => a - b),
+  };
+}
+
+/**
+ * The months whose freshness decides whether a source is up to date: the current month and the one before.
+ * @param {string} todayIso @returns {Array<{y:number, m:number}>}
+ */
+export function recentMonths(todayIso) {
+  const y = Number(todayIso.slice(0, 4)), m = Number(todayIso.slice(5, 7));
+  return [{ y, m }, m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 }];
+}
+
+/**
  * Compare new per-year totals with the previously committed ones (or the
  * reference counts when a year has no committed file yet).
  * @param {Record<number, {local:number, imported:number}>} totals

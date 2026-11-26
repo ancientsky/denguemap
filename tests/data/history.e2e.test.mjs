@@ -170,7 +170,8 @@ describe('per-year acceptance', () => {
       expect(b.countries.vn.byYear).toEqual({ ...a.countries.vn.byYear, 2026: a.countries.vn.byYear[2026] + 2 });
       expect(b.countries.vn.zh).toBe(a.countries.vn.zh);
       expect(b.from).toBe(a.from);
-      expect(logs.some((l) => /kept the committed data of year\(s\) 2025/.test(l))).toBe(true);
+      expect(logs.some((l) => /^::notice::source cases kept committed data for 2025 local month /.test(l))).toBe(true);
+      expect(logs.some((l) => l.startsWith('::warning::'))).toBe(false); // the site is up to date: notices only
       expect(r.probe).not.toBeNull(); // a rejection triggers the diagnostics probe
 
       // an identical second run changes nothing, not even the manifest
@@ -241,6 +242,29 @@ describe('per-year acceptance', () => {
     } finally { reset(); await rm(dir, { recursive: true, force: true }); }
   });
 
+  it('a gap in older months of the current year keeps those months and still takes the new recent cases', async () => {
+    const dir = await copyOf(seeded);
+    try {
+      const march = Array.from({ length: 10 }, (_, i) => caseRow(`2026/03/${String(1 + i).padStart(2, '0')}`, 1));
+      server.state.mutate = withImported(fullImported, (method, body, data) => (isLoc(method, body, 2026, 0) ? [...data, ...march] : data));
+      await run({ ...common(dir), now: T1, only: ['cases'] });
+      const before = await snapshot(dir);
+      // upstream loses March (a reload gap) while a new case appears in October
+      server.state.mutate = withImported(fullImported, (method, body, data) => (isLoc(method, body, 2026, 0) ? [...data, caseRow('2026/10/15', 1)] : data));
+      const logs = [];
+      const r = await run({ ...common(dir), now: T2, only: ['cases'], log: (m) => logs.push(m) });
+      const after = await snapshot(dir);
+      expect(r.results.cases.meta).toMatchObject({ currentYearOk: true, keptYears: [2026], keptMonths: [{ year: 2026, type: 'local', months: [3] }] });
+      const doys = JSON.parse(after['cases/2026.json']).c.filter((c) => c[2] === 0).map((c) => c[0]);
+      expect(doys).toContain(60 + 1); // 2026-03-02 (kept)
+      expect(doys).toContain(288); // 2026-10-15 (new)
+      expect(after['trend.json']).not.toBe(before['trend.json']);
+      expect(JSON.parse(after['manifest.json']).sources.cases).toMatchObject({ ok: true, stale: false, keptYears: [2026] });
+      expect(logs.some((m) => m.startsWith('::notice::source cases kept committed data'))).toBe(true);
+      expect(logs.some((m) => m.startsWith('::warning::'))).toBe(false);
+    } finally { reset(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('a year without a committed file that comes back below the reference fails the source (nothing to keep)', async () => {
     const fresh = await mkdtemp(join(tmpdir(), 'dengue-hist-ref-'));
     try {
@@ -298,7 +322,7 @@ describe('full verify run', () => {
 
   it('the workflow wires the full input, the weekly cron and DATA_FULL', async () => {
     const y = await readFile(new URL('../../.github/workflows/data.yml', import.meta.url), 'utf8');
-    expect(y).toMatch(/cron: "23 \*\/3 \* \* \*"/);
+    expect(y).toMatch(/cron: "23 \* \* \* \*"/); // hourly
     expect(y).toMatch(/cron: "41 19 \* \* 6"/);
     expect(y).toMatch(/\n {6}full:\n[\s\S]*?type: boolean/);
     expect(y).toMatch(/DATA_FULL: \$\{\{[^}]*inputs\.full[^}]*github\.event\.schedule == '41 19 \* \* 6'[^}]*\}\}/);

@@ -6,7 +6,9 @@
 import {
   cleanLabel, cmp, daysFromIso, isoFromDays, parseYmd, roundTo, toJson,
 } from '../util.mjs';
-import { ShrinkError, shrinksBelow } from '../validate.mjs';
+import {
+  mergeByMonth, recentMonths, ShrinkError, shrinksBelow,
+} from '../validate.mjs';
 
 /**
  * @typedef {object} ImportedRow
@@ -195,13 +197,15 @@ export async function buildImportedSource(ctx, opts = {}) {
   const com = readCommittedImported(opts.committed);
   const retryDelays = opts.retryDelays ?? [];
   const sleep = opts.sleep ?? ((/** @type {number} */ ms) => new Promise((r) => { setTimeout(r, ms); }));
-  const curYear = /** @type {{y:number}} */ (parseYmd(ctx.todayIso)).y;
   const maxAttempts = 1 + retryDelays.length;
   /** @type {Map<number, ImportedRow[]>} */
   const accepted = new Map();
   /** @type {Map<number, {got:number, committed:number}>} */
   let rejected = new Map();
   let dropped = 0, input = 0;
+  /** rows of the last attempt per year (a still-rejected year is merged month by month from them) */
+  /** @type {Map<number, ImportedRow[]>} */
+  let lastByYear = new Map();
   for (let attempt = 1; ; attempt++) {
     const raw = await ctx.http.asmx('GetImportedData', {});
     const norm = normalizeImported(raw);
@@ -215,6 +219,7 @@ export async function buildImportedSource(ctx, opts = {}) {
       const l = byYear.get(y);
       if (l) l.push(r); else byYear.set(y, [r]);
     }
+    lastByYear = byYear;
     rejected = new Map();
     for (const y of new Set([...byYear.keys(), ...(com?.yearCounts.keys() ?? [])])) {
       if (accepted.has(y)) continue;
@@ -236,12 +241,27 @@ export async function buildImportedSource(ctx, opts = {}) {
   if (keptYears.length && !com?.events) {
     throw new ShrinkError(`imported shrank: ${keptYears.map((y) => `${y}: ${/** @type {any} */ (rejected.get(y)).got} < ${/** @type {any} */ (rejected.get(y)).committed}`).join('; ')} (committed file has no events to keep)`);
   }
-  const newRows = [...accepted.values()].flat();
+  // a rejected year: complete months come from upstream, missing months from the committed events
+  const monthOfDay = (/** @type {number} */ d) => Number(isoFromDays(d).slice(5, 7));
+  /** @type {Array<{year:number, months:number[]}>} */
+  const keptMonths = [];
+  /** @type {ImportedRow[]} */
+  const mergedRows = [];
+  /** @type {Ev[]} */
+  const keptEvents = [];
+  for (const y of keptYears) {
+    const rows = lastByYear.get(y) ?? [];
+    const merged = mergeByMonth(eventsOfRows(rows), /** @type {Ev[]} */ (com?.events).filter((e) => yearOfDay(e.day) === y), (e) => monthOfDay(e.day), (e) => e.n);
+    keptMonths.push({ year: y, months: merged.keptMonths });
+    const kept = new Set(merged.keptMonths);
+    for (const r of rows) if (!kept.has(Number(r.date.slice(5, 7)))) mergedRows.push(r);
+    for (const e of /** @type {Ev[]} */ (com?.events)) if (yearOfDay(e.day) === y && kept.has(monthOfDay(e.day))) keptEvents.push(e);
+  }
+  const newRows = [...accepted.values()].flat().concat(mergedRows);
   /** @type {Ev[]} */
   const events = eventsOfRows(newRows);
-  if (keptYears.length) {
-    const keep = new Set(keptYears);
-    for (const e of /** @type {Ev[]} */ (com?.events)) if (keep.has(yearOfDay(e.day))) events.push(e);
+  if (keptEvents.length) {
+    events.push(...keptEvents);
     events.sort((a, b) => a.day - b.day || cmp(a.cc, b.cc));
   }
   if (events.length === 0) throw new Error('GetImportedData returned no usable records');
@@ -266,7 +286,9 @@ export async function buildImportedSource(ctx, opts = {}) {
   };
   const mine = yearEvents(events), was = com?.events ? yearEvents(com.events) : new Map();
   const acceptedYears = [...mine.keys()].filter((y) => !rejected.has(y)).sort((a, b) => a - b);
-  const changedYears = acceptedYears.filter((y) => mine.get(y) !== was.get(y));
+  // accepted years and merged years that took new months
+  const changedYears = [...mine.keys()].filter((y) => mine.get(y) !== was.get(y)).sort((a, b) => a - b);
+  const keptOut = keptMonths.filter((k) => k.months.length);
   return {
     files: { 'imported.json': out.json },
     meta: {
@@ -276,10 +298,12 @@ export async function buildImportedSource(ctx, opts = {}) {
       input,
       countries: Object.keys(out.data.countries).length,
       recent: out.recent,
-      keptYears,
+      keptYears: keptOut.map((k) => k.year),
       acceptedYears,
       changedYears,
-      currentYearOk: !rejected.has(curYear),
+      keptMonths: keptOut,
+      // up to date when the recent months came from upstream
+      currentYearOk: !keptMonths.some((k) => recentMonths(ctx.todayIso).some((r) => r.y === k.year && k.months.includes(r.m))),
       rejected: keptYears.map((y) => {
         const r = /** @type {{got:number, committed:number}} */ (rejected.get(y));
         return { year: y, ...r, reason: `${y}: ${r.got} < previous ${r.committed}` };

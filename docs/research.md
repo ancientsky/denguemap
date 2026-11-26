@@ -70,7 +70,7 @@
 ### 3.1 架構
 
 ```
-GitHub Actions（每 3 小時＋手動）
+GitHub Actions（每小時＋手動；原為每 3 小時）
   scripts/data/*.mjs  抓 → 正規化 → 驗證（schema、筆數不得驟降、座標在台灣範圍）
      ├─ 成功：寫入 public/data/*.json，有變動才 commit 到 main（git scraping，保留歷史、也是「最後一次正確資料」）
      └─ 失敗：沿用 repo 內上一版資料，manifest 標 stale，不會部署空資料

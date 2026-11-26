@@ -2,7 +2,9 @@ name: data
 
 on:
   schedule:
-    - cron: "23 */3 * * *"
+    # hourly: the backend often answers with a block of dates missing while it reloads; more runs, more chances to
+    # catch a complete answer (GitHub also skips many scheduled runs under load)
+    - cron: "23 * * * *"
     # weekly full verify (Sun 03:41 Taipei): also fetches the frozen case years, replacing them only if not lower
     - cron: "41 19 * * 6"
   workflow_dispatch:

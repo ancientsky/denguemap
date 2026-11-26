@@ -53,13 +53,14 @@ export function verdictOf(rows) {
 }
 
 /**
- * The pipeline's own GetDengueLocation requests for (year, local) as probe rows.
- * @param {ReturnType<typeof createHttp>} http @param {number} year @param {number|null} expected committed local total
+ * The pipeline's own GetDengueLocation requests for (year, type) as probe rows.
+ * @param {ReturnType<typeof createHttp>} http @param {number} year @param {number|null} expected committed total of that type
+ * @param {0|1} [imp] 1 = imported
  * @returns {ProbeRow[]}
  */
-export function ownAttempts(http, year, expected) {
+export function ownAttempts(http, year, expected, imp = 0) {
   return http.diag
-    .filter((e) => e.tag === `GetDengueLocation ${year}/0`)
+    .filter((e) => e.tag === `GetDengueLocation ${year}/${imp}`)
     .map((e) => ({
       attempt: 'run', inst: e.inst, year, records: e.records, total: e.total,
       truncated: e.records === null || e.total === null ? null : shrinksBelow(e.total, expected),
@@ -72,7 +73,8 @@ export function ownAttempts(http, year, expected) {
  * @param {typeof fetch} [p.fetchImpl]
  * @param {ReturnType<typeof createHttp>} p.http  the pipeline's client (instances seen so far)
  * @param {number} p.year  a year that was truncated
- * @param {number|null} p.expected committed local total of that year
+ * @param {number|null} p.expected committed total of that year and type
+ * @param {0|1} [p.imp] the truncated type (1 = imported; default local)
  * @param {string} p.todayIso
  * @param {number} [p.delayMs]
  * @param {(ms:number)=>Promise<void>} [p.sleep]
@@ -84,7 +86,8 @@ export async function probeUpstream(p) {
   const sleep = p.sleep ?? ((/** @type {number} */ ms) => new Promise((r) => { setTimeout(r, ms); }));
   const probe = createHttp({ baseUrl: p.baseUrl, fetchImpl: p.fetchImpl, maxAttempts: 1, backoffMs: 0, timeoutMs: 60_000, log: p.log });
   /** @type {ProbeRow[]} */
-  const rows = ownAttempts(p.http, p.year, p.expected);
+  const imp = p.imp ?? 0;
+  const rows = ownAttempts(p.http, p.year, p.expected, imp);
 
   /** @param {string} attempt @param {Record<string,string>} headers */
   const one = async (attempt, headers) => {
@@ -92,16 +95,16 @@ export async function probeUpstream(p) {
     let row = { attempt, inst: null, year: p.year, records: null, total: null, truncated: null };
     try {
       const raw = await probe.asmx('GetDengueLocation', {
-        citycode: 'all', immigration: '0', startDate: `${p.year}/01/01`, endDate: `${p.year}/12/31`,
+        citycode: 'all', immigration: String(imp), startDate: `${p.year}/01/01`, endDate: `${p.year}/12/31`,
       }, { headers });
       const e = probe.diag[probe.diag.length - 1];
-      const n = normalizeRecords(raw, { year: p.year, imp: 0, todayIso: p.todayIso });
+      const n = normalizeRecords(raw, { year: p.year, imp, todayIso: p.todayIso });
       const total = n.rows.reduce((a, r) => a + r.count, 0);
       row = { ...row, inst: e.inst, records: e.records, total, truncated: shrinksBelow(total, p.expected) };
     } catch (e) {
       row = { ...row, inst: probe.diag[probe.diag.length - 1]?.inst ?? null, error: e instanceof Error ? e.message : String(e) };
     }
-    p.log(`probe ${attempt}: year ${p.year} local → inst=${row.inst ?? '-'} records=${row.records ?? '-'} cases=${row.total ?? '-'} truncated=${row.truncated ?? 'n/a'}${row.error ? ` error=${row.error}` : ''}`);
+    p.log(`probe ${attempt}: year ${p.year} ${imp ? 'imported' : 'local'} → inst=${row.inst ?? '-'} records=${row.records ?? '-'} cases=${row.total ?? '-'} truncated=${row.truncated ?? 'n/a'}${row.error ? ` error=${row.error}` : ''}`);
     rows.push(row);
   };
 

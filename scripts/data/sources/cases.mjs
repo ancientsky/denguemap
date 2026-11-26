@@ -10,7 +10,7 @@ import {
 import {
   cmp, dayOfYear, daysFromIso, daysFromYmd, isoFromDays, mapLimit, parseYmd, round5, sameDayLastYear, toJson, ymd,
 } from '../util.mjs';
-import { shrinksBelow } from '../validate.mjs';
+import { mergeByMonth, recentMonths, shrinksBelow } from '../validate.mjs';
 
 /**
  * @typedef {{county:string, countyZh:string, countyEn:string, zh:string, en:string}} TownName
@@ -341,7 +341,7 @@ export async function buildCases(ctx, opts) {
   // ---- fetch + per-(year, type) acceptance, re-fetching only the shrunk ones
   /** @type {Map<string, {y:number, imp:0|1, rows:CaseRow[], drops:DropStats, input:number}>} */
   const accepted = new Map();
-  /** @type {Map<string, {y:number, imp:0|1, reason:string, shrink:boolean}>} */
+  /** @type {Map<string, {y:number, imp:0|1, reason:string, shrink:boolean, rows?:CaseRow[]}>} */
   const rejected = new Map();
   /** @type {Array<{y:number, imp:0|1}>} */
   let pending = fetchYears.flatMap((y) => /** @type {const} */ ([0, 1]).map((imp) => ({ y, imp })));
@@ -372,7 +372,7 @@ export async function buildCases(ctx, opts) {
       const total = sumCounts(r.rows);
       const base = baseFor(r.y, r.imp);
       if (!opts.allowShrink && shrinksBelow(total, base)) {
-        rejected.set(key, { y: r.y, imp: r.imp, reason: `${r.y} ${typeName(r.imp)}: ${total} < ${committed.has(r.y) ? 'previous' : 'reference'} ${base}`, shrink: true });
+        rejected.set(key, { y: r.y, imp: r.imp, reason: `${r.y} ${typeName(r.imp)}: ${total} < ${committed.has(r.y) ? 'previous' : 'reference'} ${base}`, shrink: true, rows: r.rows });
         again.push({ y: r.y, imp: r.imp });
       } else {
         accepted.set(key, r);
@@ -404,16 +404,26 @@ export async function buildCases(ctx, opts) {
   /** @type {Record<string,string>} */
   const files = {};
   const keptYears = new Set(), acceptedYears = [], changedYears = [];
+  /** months whose committed rows were kept, per (year, type); months 1-12, or all of them when the fetch failed */
+  /** @type {Array<{year:number, type:string, months:number[]}>} */
+  const keptMonths = [];
+  const monthOf = (/** @type {CaseRow} */ r) => Number(r.date.slice(5, 7));
   let nullTown = 0, uniquePts = 0;
   for (const y of years) {
     const c = committed.get(y);
     const mine = /** @type {const} */ ([0, 1]).map((imp) => accepted.get(`${y}|${imp}`));
-    if (!mine[0] && !mine[1]) {
-      // not fetched (frozen) or fully rejected: reuse the committed file as it is
+    const shrunk = /** @type {const} */ ([0, 1]).map((imp) => Boolean(rejected.get(`${y}|${imp}`)?.rows));
+    if (!mine[0] && !mine[1] && !shrunk[0] && !shrunk[1]) {
+      // not fetched (frozen) or both fetches failed: reuse the committed file as it is
       const cc = /** @type {NonNullable<typeof c>} */ (c);
       rowsByYear.set(y, rowsFromYearFile(cc.file));
       totals[y] = cc.totals;
-      if (fetchYears.includes(y)) keptYears.add(y);
+      if (fetchYears.includes(y)) {
+        keptYears.add(y);
+        for (const imp of /** @type {const} */ ([0, 1])) {
+          keptMonths.push({ year: y, type: typeName(imp), months: [...new Set(rowsFromYearFile(cc.file).filter((r) => r.imp === imp).map(monthOf))].sort((a, b) => a - b) });
+        }
+      }
       continue;
     }
     /** @type {CaseRow[]} */
@@ -423,8 +433,22 @@ export async function buildCases(ctx, opts) {
       const m = mine[imp];
       if (m) { rows = rows.concat(m.rows); continue; }
       old ??= rowsFromYearFile(/** @type {NonNullable<typeof c>} */ (c).file);
-      rows = rows.concat(old.filter((r) => r.imp === imp));
-      keptYears.add(y);
+      const mineOld = old.filter((r) => r.imp === imp);
+      const rej = rejected.get(`${y}|${imp}`);
+      if (rej?.rows) {
+        // shrunk: complete months come from upstream, missing months from the committed file
+        const merged = mergeByMonth(rej.rows, mineOld, monthOf, (r) => r.count);
+        rows = rows.concat(merged.items);
+        if (merged.keptMonths.length) {
+          keptYears.add(y);
+          keptMonths.push({ year: y, type: typeName(imp), months: merged.keptMonths });
+        }
+      } else {
+        // the fetch itself failed: keep the whole committed (year, type)
+        rows = rows.concat(mineOld);
+        keptYears.add(y);
+        keptMonths.push({ year: y, type: typeName(imp), months: [...new Set(mineOld.map(monthOf))].sort((a, b) => a - b) });
+      }
     }
     if (mine[0] && mine[1]) acceptedYears.push(y);
     rowsByYear.set(y, rows);
@@ -435,7 +459,11 @@ export async function buildCases(ctx, opts) {
     totals[y] = yearTotals(file);
     if (text !== c?.text) { files[`cases/${y}.json`] = text; changedYears.push(y); }
   }
-  const currentYearOk = !keptYears.has(curYear);
+  // up to date when nothing of the current year failed to fetch and the recent months came from upstream
+  const recent = recentMonths(todayIso);
+  const fetchFailed = (/** @type {{year:number, type:string}} */ k) => !rejected.get(`${k.year}|${k.type === 'imported' ? 1 : 0}`)?.rows;
+  const currentYearOk = !keptMonths.some((k) => (k.year === curYear && fetchFailed(k))
+    || recent.some((r) => r.y === k.year && k.months.includes(r.m)));
   let latestOnset;
   if (currentYearOk) {
     const out = buildTrendAndSummary(rowsByYear, geo.locateTown, todayIso, townNameLookup(geo));
@@ -445,7 +473,7 @@ export async function buildCases(ctx, opts) {
   } else {
     log(`cases: the current year ${curYear} was not accepted; trend.json and summary.json stay as they are`);
   }
-  if (keptYears.size) log(`cases: kept the committed data of year(s) ${[...keptYears].sort().join(', ')}`);
+  if (keptMonths.length) log(`cases: kept committed data for ${keptMonths.map((k) => `${k.year} ${k.type} month(s) ${k.months.join(',') || '-'}`).join('; ')}`);
 
   const drops = emptyDrops();
   for (const r of fetched) for (const k of /** @type {Array<keyof DropStats>} */ (Object.keys(drops))) drops[k] += r.drops[k];
@@ -469,6 +497,7 @@ export async function buildCases(ctx, opts) {
       acceptedYears,
       changedYears,
       keptYears: [...keptYears].sort((a, b) => a - b),
+      keptMonths,
       rejected: [...rejected.values()].map((r) => ({ year: r.y, type: typeName(r.imp), reason: r.reason, shrink: r.shrink })),
       currentYearOk,
     },

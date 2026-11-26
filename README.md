@@ -23,7 +23,7 @@
 ## 架構
 
 ```
-GitHub Actions（每 3 小時） scripts/data → public/data/*.json（有變動才 commit）→ vite build → GitHub Pages
+GitHub Actions（每小時） scripts/data → public/data/*.json（有變動才 commit）→ vite build → GitHub Pages
 ```
 
 - 前端：Vite + TypeScript（無框架）、MapLibre GL 6、ECharts 6（只在趨勢頁載入）

@@ -37,7 +37,7 @@ JSON 一律 UTF-8、無縮排（minified）。
 | `false` | `true` | 這次抓取／驗證失敗，沿用上一版檔案（`fetchedAt`、`records` 等維持上一版的值） |
 | `false` | `false` | 從未成功抓取過（沒有任何檔案；`fetchedAt: null`、`records: 0`） |
 
-`fetchedAt` 是該份資料實際成功抓取的時間。manifest 只在「任何資料檔雜湊、`warnings` 或來源 `ok`／`stale` 旗標改變」時重寫，因此資料沒變時 `generatedAt`／`fetchedAt` 不會前進（排程每 3 小時檢查一次，但不會每次都 commit）。
+`fetchedAt` 是該份資料實際成功抓取的時間。manifest 只在「任何資料檔雜湊、`warnings` 或來源 `ok`／`stale` 旗標改變」時重寫，因此資料沒變時 `generatedAt`／`fetchedAt` 不會前進（排程每小時檢查一次，但不會每次都 commit）。
 
 **`warnings`**（決定性、不含時間戳記；依 `code`、`year`、`type` 排序）：以目前已提交的資料對照固定的歷史基準（2026-10-16 觀測值，不隨新資料更新），任何計數低於基準的 80% 就產生一筆，讓前端能誠實標示上游資料短缺。
 - `cases-shortfall`：`{ code, year, type: "local"|"imported", got, expected }`，逐年（1998 起）、逐類型比對 `cases/{year}.json` 的病例總數。
@@ -240,6 +240,17 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 - manifest 在「檔案雜湊、`warnings`、`ok`／`stale`、`keptYears` 或 `yearsFetchedAt` 任一改變」時才重寫。
 - `warnings`（cases-shortfall／imported-shortfall）仍以已提交的檔案對照 REFERENCE 計算。
 
+## v6 增補（2026-11-26）：逐月合併、只在網站過時時警告、每小時排程
+
+觀察（2026-11 的執行紀錄與直接查詢）：上游會間歇地少掉**一整段日期**，而且這段缺口會移動。例如 11/25 16:43 時 2025 年 1–11 月、2024 大部分、2023 年 10 月後全部消失，12 月與 2026 完整；同日 03:21 則是 2026 全年空白。缺口狀態會持續數分鐘到數小時，換查詢方式（整年、全部類型、其他端點）都一樣。
+
+- **逐月合併**：某個 `(年, 本土|境外)`（或 imported 的某年）在重試後仍低於已提交總數時，不再整年沿用，而是逐月比較。某月新數 ≥ 已提交 − ⌊2%⌋ 就採用新資料，否則沿用已提交的該月。逐月比較**沒有** `max(5, …)` 的絕對容許量，以免小月份被整個吃掉。所以「舊月份有缺口、近月份有新病例」時，新病例照樣上線。真正的小幅下修要等到「整年通過」的那次執行才會整年取代。
+- **`ok`／`stale` 的意義**：只要「本月與上個月」都是從上游取得（沒被沿用），而且當年沒有抓取失敗，`cases`／`imported` 就是 `ok:true`，`trend.json`／`summary.json` 照常重建。近兩個月被沿用時，才是 `ok:false, stale:true`，此時不更新 trend／summary。
+- `keptYears` 仍列出「有任何資料被沿用」的年份（前端提示用）。執行結果另有 `keptMonths: [{year, type, months}]`（只在執行紀錄與 step summary 中，不寫入 manifest）。
+- **執行註記**：只在網站真的過時時（當年近兩個月沒更新，或來源失敗）才輸出 `::warning::`；沿用了較舊的月份只輸出 `::notice::`。
+- **排程改為每小時**（`23 * * * *`），增加碰到完整資料的機會；GitHub 在尖峰時本來就會略過不少排程。
+- 診斷探測改為探測實際被拒的「年份 × 類型」（優先當年），不再固定探測本土。
+
 ### 診斷（不入庫）
 
 每個 asmx 請求都記錄狀態碼、耗時、位元組、回應 `Date`、`Server`／`X-Powered-By`，以及 `ARRAffinity` cookie 值的 8 碼雜湊（絕不輸出 cookie 本身）。任何年份被拒時執行一次探測：對被截斷的一年再發 4 次本土 `GetDengueLocation`（每次新連線 `Connection: close`、不帶 cookie、間隔 5 秒），外加每個已見過的實例各 1 次（帶回該實例的 cookie，最多 4 個），並把表格（attempt／instance／year／records／cases／truncated）與一句結論（「truncation correlates with instance X」／「all instances truncated → data-state issue upstream」／…）以及一行 JSON 健康紀錄寫入 `$GITHUB_STEP_SUMMARY`。這些資訊不寫入 repo。
@@ -250,7 +261,7 @@ TopoJSON，object `countries`，properties `{ "iso2": "vn" }`（以 `i18n-iso-co
 
 ```jsonc
 {
-  "updated": "2026-10-19",        // 臺灣日期；同一天內不重抓（管線每 3 小時跑一次）
+  "updated": "2026-10-19",        // 臺灣日期；同一天內不重抓（管線每小時跑一次）
   "week0": "2001-01-01",          // 第 0 週的星期一；第 w 週 = week0 + 7w 天起的 7 天
   "weeks": 1347,                  // 每條序列的週數（到本週為止）
   "county": { "67000": "467410", … },   // 縣市 → 代表測站（無署屬有人站的縣市用鄰近低地測站）

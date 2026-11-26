@@ -221,19 +221,31 @@ describe('retry when the backend answers with truncated history', () => {
     expect(r.probe).toBeNull(); // everything was accepted in the end: no probe
   });
 
-  it('still truncated after 3 attempts: only the shrunk years are kept, imported is stale for the current year', async () => {
+  it('still truncated after 3 attempts: only the missing month is kept, the recent months are fresh', async () => {
     const before = await snapshot(rdir);
     const imp0 = callsOf('GetImportedData');
     const logs = [];
     const r = await run(opts({ now: new Date('2026-10-16T06:00:00Z'), log: (m) => logs.push(m) })); // mock returns 5 rows < 25 - 5 for 2026
     expect(r.exitCode).toBe(0);
-    expect(r.results.imported.ok).toBe(true); // wrote what it could ...
-    expect(r.results.imported.meta).toMatchObject({ currentYearOk: false, keptYears: [2026] });
+    expect(r.results.imported.ok).toBe(true);
+    // the 20 missing events are all in May: May is kept, September/October came from upstream
+    expect(r.results.imported.meta).toMatchObject({ currentYearOk: true, keptYears: [2026], keptMonths: [{ year: 2026, months: [5] }] });
     expect(callsOf('GetImportedData') - imp0).toBe(3);
     const after = await snapshot(rdir);
-    expect(after['imported.json']).toBe(before['imported.json']); // ... which is identical: 2026 events kept
-    expect(JSON.parse(after['manifest.json']).sources.imported).toMatchObject({ ok: false, stale: true, records: 25, keptYears: [2026] });
+    expect(after['imported.json']).toBe(before['imported.json']); // nothing else changed upstream: identical
+    expect(JSON.parse(after['manifest.json']).sources.imported).toMatchObject({ ok: true, stale: false, records: 25, keptYears: [2026] });
     expect(r.probe).not.toBeNull();
+  });
+
+  it('a missing recent month keeps it and makes imported stale', async () => {
+    const recentExtra = Array.from({ length: 6 }, () => ({ sickdate: '2026/10/02', country_code: 'id', country_name: '印尼', count: 1, country_lat: -2.5, country_lng: 118 }));
+    server.state.mutate = (method, _body, data) => (method === 'GetImportedData' ? [...data, ...extra, ...recentExtra] : data);
+    await run(opts({ now: new Date('2026-10-16T06:30:00Z') })); // full: 31 events
+    server.state.mutate = (method, _body, data) => (method === 'GetImportedData' ? [...data, ...extra] : data); // October lost
+    const r = await run(opts({ now: new Date('2026-10-16T06:40:00Z') }));
+    server.state.mutate = null;
+    expect(r.results.imported.meta).toMatchObject({ currentYearOk: false, keptYears: [2026], keptMonths: [{ year: 2026, months: [10] }] });
+    expect(r.results.imported.meta.records).toBe(31);
   });
 
   it('does not retry other failures (e.g. HTTP errors)', async () => {

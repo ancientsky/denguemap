@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  allowedShrink, checkShrink, computeWarnings, validateCases, validateFileShape, validateImported, validateNs1, validateVector,
+  allowedShrink, checkShrink, computeWarnings, validateCases, validateFileShape, validateImported, validateNs1, validateVector, mergeByMonth, recentMonths,
 } from '../../scripts/data/validate.mjs';
 import { buildManifest, hashFiles, manifestChanged, writeIfChanged } from '../../scripts/data/write.mjs';
 import { IMPORTED_REFERENCE, REFERENCE_COUNTS } from '../../scripts/data/config.mjs';
@@ -171,5 +171,31 @@ describe('computeWarnings', () => {
     const legacy = { ...mk('2026-10-16T12:00:00Z', []) };
     delete legacy.warnings;
     expect(manifestChanged(legacy, mk('2026-10-16T15:00:00Z', []))).toBe(false);
+  });
+});
+
+describe('mergeByMonth', () => {
+  const row = (m, n = 1) => ({ m, n });
+  const merge = (f, c) => mergeByMonth(f, c, (x) => x.m, (x) => x.n);
+  it('keeps the committed rows of months that came back lower, takes the rest from upstream', () => {
+    const committed = [row(1, 3), row(2, 4), row(11, 9)];
+    const fetched = [row(11, 9), row(12, 2)]; // January and February lost, December new
+    const r = merge(fetched, committed);
+    expect(r.keptMonths).toEqual([1, 2]);
+    expect(r.items).toEqual([row(11, 9), row(12, 2), row(1, 3), row(2, 4)]);
+  });
+  it('has no absolute slack: a small month never vanishes', () => {
+    expect(merge([], [row(8, 3)]).keptMonths).toEqual([8]);
+  });
+  it('allows the relative tolerance within a big month', () => {
+    expect(merge([row(9, 9100)], [row(9, 9233)]).keptMonths).toEqual([]);
+    expect(merge([row(9, 7606)], [row(9, 9233)]).keptMonths).toEqual([9]);
+  });
+});
+
+describe('recentMonths', () => {
+  it('is the current month and the one before, across the new year', () => {
+    expect(recentMonths('2026-11-26')).toEqual([{ y: 2026, m: 11 }, { y: 2026, m: 10 }]);
+    expect(recentMonths('2027-01-03')).toEqual([{ y: 2027, m: 1 }, { y: 2026, m: 12 }]);
   });
 });
